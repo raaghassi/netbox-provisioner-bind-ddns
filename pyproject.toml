@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "netbox-bind-ddns"
+dynamic = ["version"]
+description = "BIND provisioner with RFC 2136 DDNS support for NetBox DNS"
+requires-python = ">=3.10"
+dependencies = ["netbox-plugin-dns>=1.2.0", "dnspython>=2.8.0"]
+license = { text = "GPL-2.0" }
+
+[tool.setuptools]
+include-package-data = true
+zip-safe = false
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "netbox_bind_ddns.__version__" }
