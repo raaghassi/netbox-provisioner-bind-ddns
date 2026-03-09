@@ -129,6 +129,12 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
             self._send_rcode(message, dns.rcode.NOTAUTH)
             return
 
+        # ---- Per-zone DDNS toggle (custom field) ----
+        if not nb_zone.cf.get("ddns_enabled", True):
+            logger.warning("DDNS REFUSED from %s: zone %s has ddns_enabled=False", peer, zone_name)
+            self._send_rcode(message, dns.rcode.REFUSED)
+            return
+
         # ---- Process within a transaction ----
         close_old_connections()
         try:
