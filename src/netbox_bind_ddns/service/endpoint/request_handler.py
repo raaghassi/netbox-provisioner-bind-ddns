@@ -178,6 +178,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
             query.question[0].rdclass,
         )
 
+        tsig_key = self.server.keyring[query.keyname]
         tsig_ctx = None
         for rrset in rrsets:
             try:
@@ -188,8 +189,9 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
                 r.write_header()
                 tsig_ctx = r.add_multi_tsig(
                     ctx=tsig_ctx,
-                    secret=self.server.keyring[query.keyname],
+                    secret=tsig_key.secret,
                     keyname=query.keyname,
+                    algorithm=tsig_key.algorithm,
                     fudge=300,
                     id=query.id,
                     tsig_error=0,
@@ -215,8 +217,9 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
         r.write_header()
         tsig_ctx = r.add_multi_tsig(
             ctx=tsig_ctx,
-            secret=self.server.keyring[query.keyname],
+            secret=tsig_key.secret,
             keyname=query.keyname,
+            algorithm=tsig_key.algorithm,
             fudge=300,
             id=query.id,
             tsig_error=0,
