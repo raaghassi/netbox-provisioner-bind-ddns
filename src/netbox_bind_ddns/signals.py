@@ -1,5 +1,7 @@
 import threading
 
+import dns.name
+import dns.tsig
 from django.conf import settings as django_settings
 from django.db.models.signals import pre_save, post_save, post_delete
 from django.dispatch import receiver
@@ -7,18 +9,45 @@ from netbox_dns.models import Zone, Record
 from .service.endpoint import catalog_zone_manager as catzm
 
 
+def _build_tsig_keyring(tsig_config):
+    """
+    Build a {dns.name.Name: dns.tsig.Key} keyring from the tsig_keys plugin config.
+
+    tsig_config is a dict keyed by view name:
+      { "default": { "keyname": "mykey", "secret": "...", "algorithm": "hmac-sha512" }, ... }
+
+    Returns None if config is missing or all entries are malformed.
+    """
+    if not tsig_config:
+        return None
+    keyring = {}
+    for _view_name, data in tsig_config.items():
+        try:
+            raw_name = data["keyname"]
+            secret = data["secret"]
+            algorithm = data.get("algorithm", "hmac-sha256")
+            key_name = dns.name.from_text(raw_name, origin=None).canonicalize()
+            if not key_name.is_absolute():
+                key_name = key_name.concatenate(dns.name.root)
+            keyring[key_name] = dns.tsig.Key(name=key_name, secret=secret, algorithm=algorithm)
+        except Exception:
+            continue
+    return keyring or None
+
+
 def _notify_bind_for_record(record):
     """
-    Send a NOTIFY to BIND for the zone containing this record.
+    Send a TSIG-signed NOTIFY to BIND for the zone containing this record.
 
     Called on REST API record create/update/delete so BIND re-transfers
     the zone promptly rather than waiting for the SOA refresh interval.
-    notify_target/notify_port are read from PLUGINS_CONFIG at call time.
+    Config is read from PLUGINS_CONFIG at call time.
     """
     try:
         ddns_config = django_settings.PLUGINS_CONFIG.get("netbox_bind_ddns", {}).get("ddns", {})
         notify_target = ddns_config.get("notify_target")
         notify_port = int(ddns_config.get("notify_port", 53))
+        tsig_config = django_settings.PLUGINS_CONFIG.get("netbox_bind_ddns", {}).get("tsig_keys", [])
     except Exception:
         return
 
@@ -30,10 +59,17 @@ def _notify_bind_for_record(record):
     except Exception:
         return
 
+    tsig_keyring = _build_tsig_keyring(tsig_config)
+
     from .service.endpoint import notify
     threading.Thread(
         target=notify.send_notify,
-        args=(zone_name, notify_target, notify_port),
+        kwargs={
+            "zone_name": zone_name,
+            "target": notify_target,
+            "port": notify_port,
+            "tsig_keyring": tsig_keyring,
+        },
         daemon=True,
     ).start()
 

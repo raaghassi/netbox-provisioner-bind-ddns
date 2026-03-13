@@ -370,13 +370,18 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
             pass
 
     def _send_notify(self, zone_name):
-        """Send NOTIFY to BIND in a background thread."""
+        """Send TSIG-signed NOTIFY to BIND in a background thread."""
         if self.server.notify_target:
             from . import notify
 
             threading.Thread(
                 target=notify.send_notify,
-                args=(zone_name, self.server.notify_target, self.server.notify_port),
+                kwargs={
+                    "zone_name": zone_name,
+                    "target": self.server.notify_target,
+                    "port": self.server.notify_port,
+                    "tsig_keyring": self.server.keyring,
+                },
                 daemon=True,
             ).start()
 

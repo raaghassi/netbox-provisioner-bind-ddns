@@ -19,7 +19,7 @@ import dns.rdatatype
 logger = logging.getLogger("netbox_bind_ddns.notify")
 
 
-def send_notify(zone_name, target, port):
+def send_notify(zone_name, target, port, tsig_keyring=None):
     """
     Send a DNS NOTIFY message for the given zone.
 
@@ -27,6 +27,10 @@ def send_notify(zone_name, target, port):
         zone_name: Zone name without trailing dot (e.g. "mgmt.aghassi.net")
         target: IP address of BIND server (e.g. "127.0.0.1")
         port: DNS port of BIND (typically 53)
+        tsig_keyring: Optional dict of {dns.name.Name: dns.tsig.Key} for TSIG signing.
+            When provided, the NOTIFY is signed so BIND accepts it regardless of
+            source IP (avoids "refused notify from non-primary" when called from
+            a Docker bridge network).
     """
     try:
         qname = dns.name.from_text(zone_name + ".")
@@ -41,6 +45,9 @@ def send_notify(zone_name, target, port):
             dns.rdatatype.SOA,
             create=True,
         )
+
+        if tsig_keyring:
+            notify_msg.use_tsig(tsig_keyring)
 
         response = dns.query.udp(notify_msg, target, port=port, timeout=5.0)
 
