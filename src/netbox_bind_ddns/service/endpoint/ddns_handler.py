@@ -266,24 +266,57 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
     # ------------------------------------------------------------------
 
     def _add_record(self, zone, name, rdtype, value, ttl, ddns_tag):
-        """Create a DNS record if it does not already exist."""
-        existing = Record.objects.filter(
-            zone=zone, name=name, type=rdtype, value=value,
-        ).first()
+        """Create or update a DNS record.
 
-        if existing:
-            changed = False
-            if existing.status != "active":
-                existing.status = "active"
-                changed = True
-            if ttl is not None and existing.ttl != ttl:
-                existing.ttl = ttl
-                changed = True
-            if changed:
-                existing.save()
-            return
-
+        For A/AAAA records, any existing record with the same name and type
+        is replaced (upsert) — DHCP lease renewals change the value and
+        should not create duplicates.  For other types, exact-match
+        deduplication is preserved so that multi-value RRsets (MX, NS, etc.)
+        work correctly.
+        """
         is_address = rdtype in ("A", "AAAA")
+
+        if is_address:
+            # Upsert: find by name+type, update value if changed
+            existing = Record.objects.filter(
+                zone=zone, name=name, type=rdtype,
+            ).first()
+
+            if existing:
+                changed = False
+                old_value = existing.value
+                if existing.value != value:
+                    existing.value = value
+                    changed = True
+                if existing.status != "active":
+                    existing.status = "active"
+                    changed = True
+                if ttl is not None and existing.ttl != ttl:
+                    existing.ttl = ttl
+                    changed = True
+                if changed:
+                    existing.save()
+                    logger.debug("DDNS UPDATE %s %s %s -> %s zone=%s", name, rdtype, old_value, value, zone.name)
+                return
+
+        else:
+            # Multi-value types: deduplicate on exact value match
+            existing = Record.objects.filter(
+                zone=zone, name=name, type=rdtype, value=value,
+            ).first()
+
+            if existing:
+                changed = False
+                if existing.status != "active":
+                    existing.status = "active"
+                    changed = True
+                if ttl is not None and existing.ttl != ttl:
+                    existing.ttl = ttl
+                    changed = True
+                if changed:
+                    existing.save()
+                return
+
         record = Record(
             zone=zone,
             name=name,
