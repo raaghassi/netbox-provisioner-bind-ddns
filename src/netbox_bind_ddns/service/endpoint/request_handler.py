@@ -1,6 +1,8 @@
+import itertools
 import logging
 import socketserver
 import socket
+
 import dns.query
 import dns.message
 import dns.tsigkeyring
@@ -13,6 +15,7 @@ import dns.exception
 import dns.renderer
 from netbox_dns.models import Zone, Record
 from netbox_dns.choices import ZoneStatusChoices, RecordStatusChoices
+from netbox_bind_ddns.models import ZoneChangelog
 from . import catalog_zone_manager as catzm
 
 logger = logging.getLogger("netbox_bind_ddns.transfer")
@@ -231,6 +234,202 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
 
         logger.debug(f"{peer} AXFR {nb_view.name}/{dname}")
 
+    def _build_soa_rdata_with_serial(self, soa_rrset, serial, zone_origin):
+        """Build an SOA rdata with a substituted serial number (Option B from plan)."""
+        current_soa = soa_rrset[0]
+        return dns.rdata.from_text(
+            dns.rdataclass.IN,
+            dns.rdatatype.SOA,
+            f"{current_soa.mname} {current_soa.rname} {serial} "
+            f"{current_soa.refresh} {current_soa.retry} "
+            f"{current_soa.expire} {current_soa.minimum}",
+            origin=zone_origin,
+        )
+
+    def _handle_ixfr_request(self, query, zone, soa_rrset, peer, nb_view, dname) -> None:
+        """
+        Build and send an IXFR response (RFC 1995) using the ZoneChangelog journal.
+
+        Falls back to full AXFR-style response if changelog entries are unavailable.
+        """
+        # Extract client serial from authority section (RFC 1995 §3)
+        client_serial = None
+        for rrset in query.authority:
+            if rrset.rdtype == dns.rdatatype.SOA:
+                client_serial = rrset[0].serial
+                break
+
+        current_serial = soa_rrset[0].serial
+
+        if client_serial is None:
+            logger.warning(f"{peer} IXFR {nb_view.name}/{dname}: no client SOA in authority")
+            self._handle_axfr_request(query, zone, peer, nb_view, dname)
+            return
+
+        # Client is up to date
+        if client_serial == current_serial:
+            logger.debug(f"{peer} IXFR {nb_view.name}/{dname}: up to date (serial {current_serial})")
+            self._handle_soa_request(query, soa_rrset, zone, peer, nb_view, dname)
+            return
+
+        # Look up the NetBox zone for DB queries
+        try:
+            nb_zone = Zone.objects.get(
+                name=dname,
+                view__name=nb_view.name,
+                status=ZoneStatusChoices.STATUS_ACTIVE,
+            )
+        except Zone.DoesNotExist:
+            self._handle_axfr_request(query, zone, peer, nb_view, dname)
+            return
+
+        # Query changelog for entries between client serial and current serial
+        changes = list(
+            ZoneChangelog.objects.filter(
+                zone=nb_zone,
+                serial__gt=client_serial,
+                serial__lte=current_serial,
+            ).order_by("serial", "id")
+        )
+
+        if not changes:
+            logger.debug(
+                f"{peer} IXFR {nb_view.name}/{dname}: no changelog entries "
+                f"(client={client_serial} current={current_serial}), falling back to AXFR"
+            )
+            self._handle_axfr_request(query, zone, peer, nb_view, dname)
+            return
+
+        # Build IXFR rrsets per RFC 1995:
+        #   current SOA (opening)
+        #   for each serial transition:
+        #     old SOA (marks start of deletions)
+        #     deleted records
+        #     new SOA (marks start of additions)
+        #     added records
+        #   current SOA (closing)
+        rrsets = []
+
+        # Opening: current SOA
+        current_soa_rdata = soa_rrset[0]
+        current_soa_rrset = dns.rrset.from_rdata(zone.origin, soa_rrset.ttl, current_soa_rdata)
+        rrsets.append(current_soa_rrset)
+
+        # Group changes by serial
+        prev_serial = client_serial
+        for serial, group in itertools.groupby(changes, key=lambda c: c.serial):
+            entries = list(group)
+            deletes = [e for e in entries if e.action == "DELETE"]
+            adds = [e for e in entries if e.action == "ADD"]
+
+            # Old SOA (serial before this change)
+            old_soa_rdata = self._build_soa_rdata_with_serial(soa_rrset, prev_serial, zone.origin)
+            rrsets.append(dns.rrset.from_rdata(zone.origin, soa_rrset.ttl, old_soa_rdata))
+
+            # Deleted records
+            for entry in deletes:
+                try:
+                    rec_name = dns.name.from_text(entry.name, origin=zone.origin) if entry.name else zone.origin
+                    rdtype = dns.rdatatype.from_text(entry.rdtype)
+                    rdata = dns.rdata.from_text(
+                        dns.rdataclass.IN, rdtype, entry.value,
+                        relativize=False, origin=zone.origin,
+                    )
+                    rrsets.append(dns.rrset.from_rdata(rec_name, entry.ttl, rdata))
+                except Exception:
+                    logger.warning(f"IXFR: skipping malformed DELETE entry id={entry.id}")
+
+            # New SOA (serial after this change)
+            new_soa_rdata = self._build_soa_rdata_with_serial(soa_rrset, serial, zone.origin)
+            rrsets.append(dns.rrset.from_rdata(zone.origin, soa_rrset.ttl, new_soa_rdata))
+
+            # Added records
+            for entry in adds:
+                try:
+                    rec_name = dns.name.from_text(entry.name, origin=zone.origin) if entry.name else zone.origin
+                    rdtype = dns.rdatatype.from_text(entry.rdtype)
+                    rdata = dns.rdata.from_text(
+                        dns.rdataclass.IN, rdtype, entry.value,
+                        relativize=False, origin=zone.origin,
+                    )
+                    rrsets.append(dns.rrset.from_rdata(rec_name, entry.ttl, rdata))
+                except Exception:
+                    logger.warning(f"IXFR: skipping malformed ADD entry id={entry.id}")
+
+            prev_serial = serial
+
+        # Closing: current SOA
+        rrsets.append(current_soa_rrset)
+
+        # Send using the same TSIG-signed multi-message renderer as AXFR
+        r = dns.renderer.Renderer(
+            id=query.id,
+            flags=(dns.flags.QR | dns.flags.AA),
+            max_size=self.MAX_WIRE,
+            origin=None,
+        )
+        r.add_question(
+            query.question[0].name,
+            query.question[0].rdtype,
+            query.question[0].rdclass,
+        )
+
+        tsig_key = self.server.keyring[query.keyname]
+        tsig_ctx = None
+        for rrset in rrsets:
+            try:
+                r.add_rrset(dns.renderer.ANSWER, rrset)
+                if r.max_size - len(r.output.getvalue()) < self.RESERVED_TSIG:
+                    raise dns.exception.TooBig("TSIG wont fit")
+            except dns.exception.TooBig:
+                r.write_header()
+                tsig_ctx = r.add_multi_tsig(
+                    ctx=tsig_ctx,
+                    secret=tsig_key.secret,
+                    keyname=query.keyname,
+                    algorithm=tsig_key.algorithm,
+                    fudge=300,
+                    id=query.id,
+                    tsig_error=0,
+                    other_data=b"",
+                    request_mac=r.mac if tsig_ctx else query.mac,
+                )
+                wire = r.get_wire()
+                self.request.sendall(len(wire).to_bytes(2, "big") + wire)
+
+                r = dns.renderer.Renderer(
+                    id=query.id,
+                    flags=(dns.flags.QR | dns.flags.AA),
+                    max_size=self.MAX_WIRE,
+                    origin=None,
+                )
+                r.add_question(
+                    query.question[0].name,
+                    query.question[0].rdtype,
+                    query.question[0].rdclass,
+                )
+                r.add_rrset(dns.renderer.ANSWER, rrset)
+
+        r.write_header()
+        tsig_ctx = r.add_multi_tsig(
+            ctx=tsig_ctx,
+            secret=tsig_key.secret,
+            keyname=query.keyname,
+            algorithm=tsig_key.algorithm,
+            fudge=300,
+            id=query.id,
+            tsig_error=0,
+            other_data=b"",
+            request_mac=r.mac if tsig_ctx else query.mac,
+        )
+        wire = r.get_wire()
+        self._send_response(wire)
+
+        logger.info(
+            f"{peer} IXFR {nb_view.name}/{dname} "
+            f"serial {client_serial}->{current_serial} ({len(changes)} changes)"
+        )
+
     def _handle_dns_query(self, wire) -> None:
         peer = self.client_address[0]
         try:
@@ -312,8 +511,8 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
         elif qtype == dns.rdatatype.AXFR:
             self._handle_axfr_request(query, zone, peer, nb_view, dname)
         elif qtype == dns.rdatatype.IXFR and ixfr_as_axfr:
-            logger.debug(f"{peer} IXFR {nb_view.name}/{dname} -> responding with full AXFR")
-            self._handle_axfr_request(query, zone, peer, nb_view, dname)
+            # _handle_ixfr_request will fall back to AXFR if no changelog exists
+            self._handle_ixfr_request(query, zone, soa_rrset, peer, nb_view, dname)
 
 
 class UDPRequestHandler(DNSBaseRequestHandler):

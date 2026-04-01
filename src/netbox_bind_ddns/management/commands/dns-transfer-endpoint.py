@@ -1,5 +1,6 @@
 import logging
 import threading
+import time
 
 import dns.name
 import dns.tsig
@@ -83,6 +84,35 @@ class Command(BaseCommand):
             help="DDNS receiver port (0 = disabled)"
         )
 
+    def _prune_changelog(self, retention):
+        """Periodically prune ZoneChangelog entries beyond retention limit per zone."""
+        from netbox_bind_ddns.models import ZoneChangelog
+
+        while True:
+            time.sleep(300)  # Run every 5 minutes
+            try:
+                zone_ids = (
+                    ZoneChangelog.objects.values_list("zone_id", flat=True).distinct()
+                )
+                for zone_id in zone_ids:
+                    count = ZoneChangelog.objects.filter(zone_id=zone_id).count()
+                    if count > retention:
+                        cutoff = (
+                            ZoneChangelog.objects.filter(zone_id=zone_id)
+                            .order_by("-serial", "-id")
+                            .values_list("id", flat=True)[retention:]
+                        )
+                        deleted, _ = ZoneChangelog.objects.filter(
+                            id__in=list(cutoff)
+                        ).delete()
+                        if deleted:
+                            logger.info(
+                                "Pruned %d changelog entries for zone_id=%s",
+                                deleted, zone_id,
+                            )
+            except Exception:
+                logger.exception("Error pruning ZoneChangelog")
+
     def handle(self, *args, **options):
         port = options["port"]
         address = options["address"]
@@ -95,8 +125,15 @@ class Command(BaseCommand):
         self.load_settings()
         self.load_tsig_key_settings()
 
-        # ---- AXFR servers ----
+        # ---- Changelog pruning ----
         axfr_config = self.settings.get("axfr", {})
+        retention = axfr_config.get("ixfr_changelog_retention", 1000)
+        threading.Thread(
+            target=self._prune_changelog, args=(retention,), daemon=True
+        ).start()
+        logger.info("IXFR changelog pruning active (retention=%d per zone)", retention)
+
+        # ---- AXFR servers ----
         ixfr_as_axfr = axfr_config.get("ixfr_as_axfr", False)
 
         udp_server = UDPDNSServer(
