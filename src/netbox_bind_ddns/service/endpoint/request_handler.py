@@ -266,9 +266,14 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
         qtype = question.rdtype
         dname = qname.to_text().rstrip(".")
 
-        if qtype not in (dns.rdatatype.AXFR, dns.rdatatype.SOA):
+        ixfr_as_axfr = getattr(self.server, "ixfr_as_axfr", False)
+        accepted_types = (dns.rdatatype.AXFR, dns.rdatatype.SOA)
+        if ixfr_as_axfr:
+            accepted_types = (dns.rdatatype.AXFR, dns.rdatatype.IXFR, dns.rdatatype.SOA)
+
+        if qtype not in accepted_types:
             logger.warning(
-                f"Request denied from {peer}: Request was not AXFR or SOA (Type: {qtype})"
+                f"Request denied from {peer}: unsupported query type {qtype}"
             )
             self._deny_request(query)
             return
@@ -305,6 +310,9 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
         if qtype == dns.rdatatype.SOA:
             self._handle_soa_request(query, soa_rrset, zone, peer, nb_view, dname)
         elif qtype == dns.rdatatype.AXFR:
+            self._handle_axfr_request(query, zone, peer, nb_view, dname)
+        elif qtype == dns.rdatatype.IXFR and ixfr_as_axfr:
+            logger.debug(f"{peer} IXFR {nb_view.name}/{dname} -> responding with full AXFR")
             self._handle_axfr_request(query, zone, peer, nb_view, dname)
 
 

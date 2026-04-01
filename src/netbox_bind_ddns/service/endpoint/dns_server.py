@@ -26,7 +26,8 @@ class DNSAddressMixin:
 class TCPDNSServer(DNSAddressMixin, socketserver.TCPServer):
     allow_reuse_address = True
 
-    def __init__(self, server_address, handler_class, keyring, tsig_view_map):
+    def __init__(self, server_address, handler_class, keyring, tsig_view_map,
+                 ixfr_as_axfr=False):
         sockaddr = self._resolve_address(
             server_address,
             socket.SOCK_STREAM,
@@ -37,12 +38,14 @@ class TCPDNSServer(DNSAddressMixin, socketserver.TCPServer):
 
         self.keyring = keyring
         self.tsig_view_map = tsig_view_map
+        self.ixfr_as_axfr = ixfr_as_axfr
 
 
 class UDPDNSServer(DNSAddressMixin, socketserver.UDPServer):
     allow_reuse_address = True
 
-    def __init__(self, server_address, handler_class, keyring, tsig_view_map):
+    def __init__(self, server_address, handler_class, keyring, tsig_view_map,
+                 ixfr_as_axfr=False):
         sockaddr = self._resolve_address(
             server_address,
             socket.SOCK_DGRAM,
@@ -53,6 +56,7 @@ class UDPDNSServer(DNSAddressMixin, socketserver.UDPServer):
 
         self.keyring = keyring
         self.tsig_view_map = tsig_view_map
+        self.ixfr_as_axfr = ixfr_as_axfr
 
 
 # Threaded variants for DDNS handlers (DB writes during request processing)

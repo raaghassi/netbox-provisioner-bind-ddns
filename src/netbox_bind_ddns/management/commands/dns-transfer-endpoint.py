@@ -95,12 +95,17 @@ class Command(BaseCommand):
         self.load_settings()
         self.load_tsig_key_settings()
 
-        # ---- AXFR servers (unchanged from upstream) ----
+        # ---- AXFR servers ----
+        axfr_config = self.settings.get("axfr", {})
+        ixfr_as_axfr = axfr_config.get("ixfr_as_axfr", False)
+
         udp_server = UDPDNSServer(
-            (address, port), UDPRequestHandler, self.keyring, self.tsig_view_map
+            (address, port), UDPRequestHandler, self.keyring, self.tsig_view_map,
+            ixfr_as_axfr=ixfr_as_axfr,
         )
         tcp_server = TCPDNSServer(
-            (address, port), TCPRequestHandler, self.keyring, self.tsig_view_map
+            (address, port), TCPRequestHandler, self.keyring, self.tsig_view_map,
+            ixfr_as_axfr=ixfr_as_axfr,
         )
 
         udp_thread = threading.Thread(
