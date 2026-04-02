@@ -364,98 +364,19 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
         # Closing: current SOA
         rrsets.append(current_soa_rrset)
 
-        # Debug: log the IXFR rrset sequence
-        for i, rs in enumerate(rrsets):
-            logger.debug(
-                "IXFR rrset[%d]: %s %s %s",
-                i, rs.name, dns.rdatatype.to_text(rs.rdtype),
-                " ".join(str(rd) for rd in rs),
-            )
-
-        # Send using the same TSIG-signed multi-message renderer as AXFR
-        r = dns.renderer.Renderer(
-            id=query.id,
-            flags=(dns.flags.QR | dns.flags.AA),
-            max_size=self.MAX_WIRE,
-            origin=None,
-        )
-        r.add_question(
-            query.question[0].name,
-            query.question[0].rdtype,
-            query.question[0].rdclass,
-        )
-
-        tsig_key = self.server.keyring[query.keyname]
-        tsig_ctx = None
+        # Build IXFR response using dns.message (standard serialization)
+        response = dns.message.make_response(query)
+        response.flags |= dns.flags.AA
         for rrset in rrsets:
-            try:
-                r.add_rrset(dns.renderer.ANSWER, rrset)
-                if r.max_size - len(r.output.getvalue()) < self.RESERVED_TSIG:
-                    raise dns.exception.TooBig("TSIG wont fit")
-            except dns.exception.TooBig:
-                r.write_header()
-                tsig_ctx = r.add_multi_tsig(
-                    ctx=tsig_ctx,
-                    secret=tsig_key.secret,
-                    keyname=query.keyname,
-                    algorithm=tsig_key.algorithm,
-                    fudge=300,
-                    id=query.id,
-                    tsig_error=0,
-                    other_data=b"",
-                    request_mac=r.mac if tsig_ctx else query.mac,
-                )
-                wire = r.get_wire()
-                self.request.sendall(len(wire).to_bytes(2, "big") + wire)
+            response.answer.append(rrset)
 
-                r = dns.renderer.Renderer(
-                    id=query.id,
-                    flags=(dns.flags.QR | dns.flags.AA),
-                    max_size=self.MAX_WIRE,
-                    origin=None,
-                )
-                r.add_question(
-                    query.question[0].name,
-                    query.question[0].rdtype,
-                    query.question[0].rdclass,
-                )
-                r.add_rrset(dns.renderer.ANSWER, rrset)
-
-        r.write_header()
-        tsig_ctx = r.add_multi_tsig(
-            ctx=tsig_ctx,
-            secret=tsig_key.secret,
+        response.use_tsig(
+            self.server.keyring,
             keyname=query.keyname,
-            algorithm=tsig_key.algorithm,
-            fudge=300,
-            id=query.id,
-            tsig_error=0,
-            other_data=b"",
-            request_mac=r.mac if tsig_ctx else query.mac,
+            original_id=query.id,
         )
-        wire = r.get_wire()
 
-        # Debug: validate wire before sending
-        logger.debug(
-            "IXFR wire: %d bytes, %d rrsets, tsig_ctx=%s",
-            len(wire), len(rrsets), tsig_ctx is not None,
-        )
-        try:
-            # Parse wire back (without TSIG verification) to check structure
-            test_msg = dns.message.from_wire(
-                wire, keyring=self.server.keyring,
-                continue_on_error=True, ignore_trailing=False,
-            )
-            logger.debug(
-                "IXFR wire validation: QDCOUNT=%d ANCOUNT=%d NSCOUNT=%d ARCOUNT=%d",
-                test_msg.question and len(test_msg.question) or 0,
-                len(test_msg.answer),
-                len(test_msg.authority),
-                len(test_msg.additional),
-            )
-        except Exception as e:
-            logger.warning("IXFR wire validation failed: %s", e)
-
+        wire = response.to_wire()
         self._send_response(wire)
 
         logger.info(
