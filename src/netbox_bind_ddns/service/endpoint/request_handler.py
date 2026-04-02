@@ -364,6 +364,14 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
         # Closing: current SOA
         rrsets.append(current_soa_rrset)
 
+        # Debug: log the IXFR rrset sequence
+        for i, rs in enumerate(rrsets):
+            logger.debug(
+                "IXFR rrset[%d]: %s %s %s",
+                i, rs.name, dns.rdatatype.to_text(rs.rdtype),
+                " ".join(str(rd) for rd in rs),
+            )
+
         # Send using the same TSIG-signed multi-message renderer as AXFR
         r = dns.renderer.Renderer(
             id=query.id,
@@ -426,6 +434,28 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
             request_mac=r.mac if tsig_ctx else query.mac,
         )
         wire = r.get_wire()
+
+        # Debug: validate wire before sending
+        logger.debug(
+            "IXFR wire: %d bytes, %d rrsets, tsig_ctx=%s",
+            len(wire), len(rrsets), tsig_ctx is not None,
+        )
+        try:
+            # Parse wire back (without TSIG verification) to check structure
+            test_msg = dns.message.from_wire(
+                wire, keyring=self.server.keyring,
+                continue_on_error=True, ignore_trailing=False,
+            )
+            logger.debug(
+                "IXFR wire validation: QDCOUNT=%d ANCOUNT=%d NSCOUNT=%d ARCOUNT=%d",
+                test_msg.question and len(test_msg.question) or 0,
+                len(test_msg.answer),
+                len(test_msg.authority),
+                len(test_msg.additional),
+            )
+        except Exception as e:
+            logger.warning("IXFR wire validation failed: %s", e)
+
         self._send_response(wire)
 
         logger.info(
