@@ -237,12 +237,15 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
     def _build_soa_rdata_with_serial(self, soa_rrset, serial, zone_origin):
         """Build an SOA rdata with a substituted serial number (Option B from plan)."""
         current_soa = soa_rrset[0]
+        mname = current_soa.mname.derelativize(zone_origin)
+        rname = current_soa.rname.derelativize(zone_origin)
         return dns.rdata.from_text(
             dns.rdataclass.IN,
             dns.rdatatype.SOA,
-            f"{current_soa.mname} {current_soa.rname} {serial} "
+            f"{mname} {rname} {serial} "
             f"{current_soa.refresh} {current_soa.retry} "
             f"{current_soa.expire} {current_soa.minimum}",
+            relativize=False,
             origin=zone_origin,
         )
 
