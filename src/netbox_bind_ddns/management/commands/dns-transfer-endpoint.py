@@ -99,6 +99,57 @@ class Command(BaseCommand):
             "--webhook-secret", type=str, default="",
             help="Shared secret for verifying NetBox webhook signatures"
         )
+        parser.add_argument(
+            "--webhook-url", type=str, default="",
+            help="Reachable URL of this webhook listener from NetBox's perspective "
+                 "(e.g., http://netbox-dns:8080/). Required to auto-register the "
+                 "event rule and webhook in NetBox."
+        )
+
+    def _register_event_rule(self, webhook_url, webhook_secret):
+        """
+        Ensure a NetBox EventRule + Webhook exist for netbox_dns.Record changes,
+        pointing at our webhook listener. Idempotent: updates existing entries
+        if they already exist under the managed names.
+        """
+        from core.events import OBJECT_CREATED, OBJECT_UPDATED, OBJECT_DELETED
+        from core.models import ObjectType
+        from django.contrib.contenttypes.models import ContentType
+        from extras.choices import EventRuleActionChoices
+        from extras.models import EventRule, Webhook
+
+        webhook_name = "netbox_bind_ddns record NOTIFY"
+        rule_name = "netbox_bind_ddns record change"
+
+        webhook, _ = Webhook.objects.update_or_create(
+            name=webhook_name,
+            defaults={
+                "payload_url": webhook_url,
+                "http_method": "POST",
+                "http_content_type": "application/json",
+                "secret": webhook_secret or "",
+                "ssl_verification": False,
+            },
+        )
+
+        webhook_ct = ContentType.objects.get_for_model(Webhook)
+        record_ot = ObjectType.objects.get(app_label="netbox_dns", model="record")
+
+        rule, _ = EventRule.objects.update_or_create(
+            name=rule_name,
+            defaults={
+                "event_types": [OBJECT_CREATED, OBJECT_UPDATED, OBJECT_DELETED],
+                "enabled": True,
+                "action_type": EventRuleActionChoices.WEBHOOK,
+                "action_object_type": webhook_ct,
+                "action_object_id": webhook.id,
+                "description": "Auto-managed by netbox_bind_ddns — do not edit",
+            },
+        )
+        rule.object_types.set([record_ot])
+
+        logger.info("Registered event rule '%s' -> webhook '%s' (%s)",
+                    rule_name, webhook_name, webhook_url)
 
     def _prune_changelog(self, retention):
         """Periodically prune ZoneChangelog entries beyond retention limit per zone."""
@@ -137,6 +188,7 @@ class Command(BaseCommand):
         notify_target = options["notify_target"]
         notify_port = options["notify_port"]
         webhook_secret = options["webhook_secret"]
+        webhook_url = options["webhook_url"]
 
         # Initialize catalog zone manager
         catzm.init()
@@ -211,6 +263,10 @@ class Command(BaseCommand):
                 raise RuntimeError(
                     "netbox_bind_ddns: --notify-target is required when --webhook-port is set"
                 )
+            if not webhook_url:
+                raise RuntimeError(
+                    "netbox_bind_ddns: --webhook-url is required when --webhook-port is set"
+                )
 
             from netbox_bind_ddns.service.endpoint.webhook_handler import WebhookServer
 
@@ -224,6 +280,12 @@ class Command(BaseCommand):
             threading.Thread(target=webhook_server.serve_forever, daemon=True).start()
             logger.info("Webhook listener on %s:%d (notify -> %s:%d)",
                         address, webhook_port, notify_target, notify_port)
+
+            # Register the event rule and webhook in NetBox
+            try:
+                self._register_event_rule(webhook_url, webhook_secret)
+            except Exception:
+                logger.exception("Failed to register NetBox event rule/webhook")
 
         # AXFR TCP server runs on main thread (blocking)
         logger.info("AXFR endpoint listening on %s tcp/%d", address, port)
