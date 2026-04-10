@@ -1,9 +1,8 @@
 """
 DNS NOTIFY sender.
 
-After a DDNS update modifies zone data in NetBox, this sends a NOTIFY
-to BIND so it re-transfers the affected zone promptly rather than
-waiting for the SOA refresh interval.
+Sends NOTIFY messages to secondary DNS servers so they re-transfer
+zones promptly rather than waiting for the SOA refresh interval.
 """
 import logging
 
@@ -25,12 +24,9 @@ def send_notify(zone_name, target, port, tsig_keyring=None):
 
     Args:
         zone_name: Zone name without trailing dot (e.g. "mgmt.aghassi.net")
-        target: IP address of BIND server (e.g. "127.0.0.1")
-        port: DNS port of BIND (typically 53)
+        target: IP address of secondary DNS server (e.g. "127.0.0.1")
+        port: DNS port of secondary (typically 53)
         tsig_keyring: Optional dict of {dns.name.Name: dns.tsig.Key} for TSIG signing.
-            When provided, the NOTIFY is signed so BIND accepts it regardless of
-            source IP (avoids "refused notify from non-primary" when called from
-            a Docker bridge network).
     """
     try:
         qname = dns.name.from_text(zone_name + ".")

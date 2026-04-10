@@ -83,6 +83,22 @@ class Command(BaseCommand):
             "--ddns-port", type=int, default=0,
             help="DDNS receiver port (0 = disabled)"
         )
+        parser.add_argument(
+            "--webhook-port", type=int, default=0,
+            help="HTTP webhook listener port for NetBox event rules (0 = disabled)"
+        )
+        parser.add_argument(
+            "--notify-target", type=str, default="",
+            help="IP address of secondary DNS server to NOTIFY on zone changes"
+        )
+        parser.add_argument(
+            "--notify-port", type=int, default=53,
+            help="DNS port of secondary server for NOTIFY (default: 53)"
+        )
+        parser.add_argument(
+            "--webhook-secret", type=str, default="",
+            help="Shared secret for verifying NetBox webhook signatures"
+        )
 
     def _prune_changelog(self, retention):
         """Periodically prune ZoneChangelog entries beyond retention limit per zone."""
@@ -117,6 +133,10 @@ class Command(BaseCommand):
         port = options["port"]
         address = options["address"]
         ddns_port = options["ddns_port"]
+        webhook_port = options["webhook_port"]
+        notify_target = options["notify_target"]
+        notify_port = options["notify_port"]
+        webhook_secret = options["webhook_secret"]
 
         # Initialize catalog zone manager
         catzm.init()
@@ -155,8 +175,6 @@ class Command(BaseCommand):
         if ddns_port > 0:
             ddns_config = self.settings.get("ddns", {})
             allowed_zones = set(ddns_config.get("allowed_zones", []))
-            notify_target = ddns_config.get("notify_target", "127.0.0.1")
-            notify_port = ddns_config.get("notify_port", 53)
 
             # Ensure the ddns tag exists
             from extras.models import Tag
@@ -174,22 +192,38 @@ class Command(BaseCommand):
                 (address, ddns_port), DDNSUDPHandler,
                 self.keyring, self.tsig_view_map,
                 allowed_zones=allowed_zones,
-                notify_target=notify_target,
-                notify_port=notify_port,
                 ddns_tag=ddns_tag,
             )
             ddns_tcp = ThreadingTCPDNSServer(
                 (address, ddns_port), DDNSTCPHandler,
                 self.keyring, self.tsig_view_map,
                 allowed_zones=allowed_zones,
-                notify_target=notify_target,
-                notify_port=notify_port,
                 ddns_tag=ddns_tag,
             )
 
             threading.Thread(target=ddns_udp.serve_forever, daemon=True).start()
             threading.Thread(target=ddns_tcp.serve_forever, daemon=True).start()
             logger.info("DDNS receiver listening on %s:%d (UDP+TCP)", address, ddns_port)
+
+        # ---- Webhook server for NOTIFY ----
+        if webhook_port > 0:
+            if not notify_target:
+                raise RuntimeError(
+                    "netbox_bind_ddns: --notify-target is required when --webhook-port is set"
+                )
+
+            from netbox_bind_ddns.service.endpoint.webhook_handler import WebhookServer
+
+            webhook_server = WebhookServer(
+                (address, webhook_port),
+                notify_target=notify_target,
+                notify_port=notify_port,
+                tsig_keyring=self.keyring,
+                webhook_secret=webhook_secret or None,
+            )
+            threading.Thread(target=webhook_server.serve_forever, daemon=True).start()
+            logger.info("Webhook listener on %s:%d (notify -> %s:%d)",
+                        address, webhook_port, notify_target, notify_port)
 
         # AXFR TCP server runs on main thread (blocking)
         logger.info("AXFR endpoint listening on %s tcp/%d", address, port)

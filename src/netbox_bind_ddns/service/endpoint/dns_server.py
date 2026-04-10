@@ -65,7 +65,7 @@ class ThreadingTCPDNSServer(DNSAddressMixin, socketserver.ThreadingMixIn, socket
     daemon_threads = True
 
     def __init__(self, server_address, handler_class, keyring, tsig_view_map,
-                 allowed_zones=None, notify_target=None, notify_port=53, ddns_tag=None):
+                 allowed_zones=None, ddns_tag=None):
         sockaddr = self._resolve_address(
             server_address,
             socket.SOCK_STREAM,
@@ -77,8 +77,6 @@ class ThreadingTCPDNSServer(DNSAddressMixin, socketserver.ThreadingMixIn, socket
         self.keyring = keyring
         self.tsig_view_map = tsig_view_map
         self.allowed_zones = allowed_zones or set()
-        self.notify_target = notify_target
-        self.notify_port = notify_port
         self.ddns_tag = ddns_tag
 
 
@@ -87,7 +85,7 @@ class ThreadingUDPDNSServer(DNSAddressMixin, socketserver.ThreadingMixIn, socket
     daemon_threads = True
 
     def __init__(self, server_address, handler_class, keyring, tsig_view_map,
-                 allowed_zones=None, notify_target=None, notify_port=53, ddns_tag=None):
+                 allowed_zones=None, ddns_tag=None):
         sockaddr = self._resolve_address(
             server_address,
             socket.SOCK_DGRAM,
@@ -99,6 +97,4 @@ class ThreadingUDPDNSServer(DNSAddressMixin, socketserver.ThreadingMixIn, socket
         self.keyring = keyring
         self.tsig_view_map = tsig_view_map
         self.allowed_zones = allowed_zones or set()
-        self.notify_target = notify_target
-        self.notify_port = notify_port
         self.ddns_tag = ddns_tag

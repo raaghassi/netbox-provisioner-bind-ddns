@@ -7,7 +7,6 @@ and translates them into netbox_dns Record create/delete operations.
 import logging
 import socket
 import socketserver
-import threading
 
 import dns.flags
 import dns.message
@@ -33,8 +32,6 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
       self.server.keyring        - dict of dns.tsig.Key objects
       self.server.tsig_view_map  - dict mapping key name str -> View object
       self.server.allowed_zones  - set of zone name strings (without trailing dot)
-      self.server.notify_target  - str IP address for NOTIFY
-      self.server.notify_port    - int port for NOTIFY
       self.server.ddns_tag       - Tag object for tagging DDNS records
     """
 
@@ -151,9 +148,6 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
 
             logger.info("DDNS UPDATE %s from %s: OK", zone_name, peer)
             self._send_rcode(message, dns.rcode.NOERROR)
-
-            # NOTIFY BIND in background thread
-            self._send_notify(zone_name)
 
         except Exception:
             logger.exception("DDNS UPDATE %s from %s: SERVFAIL", zone_name, peer)
@@ -401,23 +395,6 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
             self._send_response(response.to_wire())
         except Exception:
             pass
-
-    def _send_notify(self, zone_name):
-        """Send TSIG-signed NOTIFY to BIND in a background thread."""
-        if self.server.notify_target:
-            from . import notify
-
-            threading.Thread(
-                target=notify.send_notify,
-                kwargs={
-                    "zone_name": zone_name,
-                    "target": self.server.notify_target,
-                    "port": self.server.notify_port,
-                    "tsig_keyring": self.server.keyring,
-                },
-                daemon=True,
-            ).start()
-
 
 # ------------------------------------------------------------------
 # Transport subclasses
