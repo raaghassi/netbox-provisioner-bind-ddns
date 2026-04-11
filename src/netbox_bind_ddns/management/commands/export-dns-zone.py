@@ -1,7 +1,3 @@
-import dns.zone
-import dns.rdatatype
-import dns.rdataclass
-import dns.exception
 import netbox_dns.models
 from netbox_bind_ddns.utils import export_bind_zone_file
 from django.core.management.base import BaseCommand, CommandError

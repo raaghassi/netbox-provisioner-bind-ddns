@@ -49,8 +49,6 @@ def _init_serial() -> None:
 
 
 def _increment_serial() -> None:
-    global _SERIAL_OBJ
-
     if 0 < _SERIAL_OBJ.value < _SERIAL_MAX:
         _SERIAL_OBJ.value += 1
         _SERIAL_OBJ.save()
