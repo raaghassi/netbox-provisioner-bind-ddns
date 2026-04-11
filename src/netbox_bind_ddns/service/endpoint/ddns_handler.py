@@ -7,9 +7,13 @@ and translates them into netbox_dns Record create/delete operations.
 import logging
 import socket
 import socketserver
+from typing import TYPE_CHECKING, Union
 
 import dns.flags
 import dns.message
+
+if TYPE_CHECKING:
+    from .dns_server import ThreadingUDPDNSServer, ThreadingTCPDNSServer
 import dns.name
 import dns.opcode
 import dns.query
@@ -34,6 +38,8 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
       self.server.allowed_zones  - set of zone name strings (without trailing dot)
       self.server.ddns_tag       - Tag object for tagging DDNS records
     """
+    if TYPE_CHECKING:
+        server: Union["ThreadingUDPDNSServer", "ThreadingTCPDNSServer"]  # type: ignore[assignment]
 
     # ------------------------------------------------------------------
     # Transport (override in subclasses)
@@ -59,15 +65,15 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
             )
         except dns.tsig.BadSignature:
             logger.warning("DDNS REFUSED from %s: bad TSIG signature", peer)
-            self._deny_bad_tsig(wire, dns.tsig.BADSIG)
+            self._deny_bad_tsig(wire, dns.tsig.BADSIG)  # type: ignore[attr-defined]
             return
         except dns.message.UnknownTSIGKey:
             logger.warning("DDNS REFUSED from %s: unknown TSIG key", peer)
-            self._deny_bad_tsig(wire, dns.tsig.BADKEY)
+            self._deny_bad_tsig(wire, dns.tsig.BADKEY)  # type: ignore[attr-defined]
             return
         except dns.tsig.BadAlgorithm:
             logger.warning("DDNS REFUSED from %s: bad TSIG algorithm", peer)
-            self._deny_bad_tsig(wire, dns.tsig.BADKEY)
+            self._deny_bad_tsig(wire, dns.tsig.BADKEY)  # type: ignore[attr-defined]
             return
         except Exception:
             logger.exception("DDNS: failed to parse message from %s", peer)
@@ -96,7 +102,7 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
         zone_name = zone_rrset.name.to_text().rstrip(".")
 
         # ---- TSIG -> View mapping ----
-        if not message.had_tsig:
+        if not message.had_tsig or message.keyname is None:
             logger.warning("DDNS REFUSED from %s: no TSIG", peer)
             self._send_rcode(message, dns.rcode.REFUSED)
             return

@@ -2,17 +2,27 @@ import itertools
 import logging
 import socketserver
 import socket
+from typing import TYPE_CHECKING, Optional, Union
 
-import dns.query
-import dns.message
-import dns.tsigkeyring
-import dns.name
-import dns.zone
-import dns.rdatatype
-import dns.rdataclass
-import dns.rdtypes
+if TYPE_CHECKING:
+    from .dns_server import UDPDNSServer, TCPDNSServer
+
 import dns.exception
+import dns.flags
+import dns.message
+import dns.name
+import dns.query
+import dns.rcode
+import dns.rdata
+import dns.rdataclass
+import dns.rdataset
+import dns.rdatatype
+import dns.rdtypes
 import dns.renderer
+import dns.rrset
+import dns.tsig
+import dns.tsigkeyring
+import dns.zone
 from netbox_dns.models import Zone, Record
 from netbox_dns.choices import ZoneStatusChoices, RecordStatusChoices
 from netbox_bind_ddns.models import ZoneChangelog
@@ -22,12 +32,15 @@ logger = logging.getLogger("netbox_bind_ddns.transfer")
 
 
 class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
+    if TYPE_CHECKING:
+        server: Union["UDPDNSServer", "TCPDNSServer"]  # type: ignore[assignment]
+
     def __init__(self, request, client_address, server) -> None:
         self.MAX_WIRE = 65535
         self.RESERVED_TSIG = 300
         super().__init__(request, client_address, server)
 
-    def _getZoneFromNB(self, zone_name, view_name) -> dns.zone.Zone:
+    def _getZoneFromNB(self, zone_name, view_name) -> Optional[dns.zone.Zone]:
         try:
             nb_zone = Zone.objects.get(
                 name=zone_name,
@@ -37,7 +50,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
         except Zone.DoesNotExist:
             return None
 
-        zone = dns.zone.Zone(zone_name, dns.name.root)
+        zone = dns.zone.Zone(zone_name)
         zone.rdclass = dns.rdataclass.IN
 
         nb_records = Record.objects.filter(
@@ -102,7 +115,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
                 zone.replace_rdataset(name, rdataset)
         return zone
 
-    def _denyRequestBadTSIG(self, wire, tsig_error: dns.rcode) -> None:
+    def _denyRequestBadTSIG(self, wire, tsig_error: dns.rcode.Rcode) -> None:
         query = dns.message.from_wire(
             wire, keyring={}, ignore_trailing=True, continue_on_error=True
         )
@@ -121,7 +134,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
     def _send_response(self, data) -> None:
         raise NotImplementedError
 
-    def _deny_request(self, query, rcode: dns.rcode = dns.rcode.REFUSED) -> None:
+    def _deny_request(self, query, rcode: dns.rcode.Rcode = dns.rcode.REFUSED) -> None:
         response = dns.message.make_response(query)
         response.set_rcode(rcode)
         wire = response.to_wire(multi=False)
@@ -340,7 +353,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
                     )
                     rrsets.append(dns.rrset.from_rdata(rec_name, entry.ttl, rdata))
                 except Exception:
-                    logger.warning(f"IXFR: skipping malformed DELETE entry id={entry.id}")
+                    logger.warning(f"IXFR: skipping malformed DELETE entry id={entry.pk}")
 
             # New SOA (serial after this change)
             new_soa_rdata = self._build_soa_rdata_with_serial(soa_rrset, serial, zone.origin)
@@ -357,7 +370,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
                     )
                     rrsets.append(dns.rrset.from_rdata(rec_name, entry.ttl, rdata))
                 except Exception:
-                    logger.warning(f"IXFR: skipping malformed ADD entry id={entry.id}")
+                    logger.warning(f"IXFR: skipping malformed ADD entry id={entry.pk}")
 
             prev_serial = serial
 
@@ -431,7 +444,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
             self._deny_request(query)
             return
 
-        if not query.had_tsig:
+        if not query.had_tsig or query.keyname is None:
             logger.warning(f"Request denied from {peer}: No TSIG key used")
             self._deny_request(query)
             return
@@ -450,7 +463,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
             zone = catzm.create_zone(dname, nb_view.name)
         else:
             zone = self._getZoneFromNB(dname, nb_view.name)
-        if not zone:
+        if not zone or zone.origin is None:
             logger.warning(f"Zone {dname} not found in view {nb_view.name}")
             self._deny_request(query)
             return

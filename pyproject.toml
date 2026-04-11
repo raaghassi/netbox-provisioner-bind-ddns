@@ -10,6 +10,9 @@ requires-python = ">=3.10"
 dependencies = ["netbox-plugin-dns>=1.2.0", "dnspython>=2.8.0"]
 license = { text = "GPL-2.0" }
 
+[project.optional-dependencies]
+dev = ["django-stubs", "pyright"]
+
 [tool.setuptools]
 include-package-data = true
 zip-safe = false

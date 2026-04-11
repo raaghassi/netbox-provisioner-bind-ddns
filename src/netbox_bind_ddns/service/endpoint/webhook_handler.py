@@ -10,6 +10,7 @@ import json
 import logging
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from typing import TYPE_CHECKING
 
 from . import notify
 
@@ -26,6 +27,8 @@ class WebhookHandler(BaseHTTPRequestHandler):
       self.server.tsig_keyring    - dict of {dns.name.Name: dns.tsig.Key}
       self.server.webhook_secret  - str shared secret for HMAC verification (optional)
     """
+    if TYPE_CHECKING:
+        server: "WebhookServer"  # type: ignore[assignment]
 
     def do_POST(self):
         content_length = int(self.headers.get("Content-Length", 0))

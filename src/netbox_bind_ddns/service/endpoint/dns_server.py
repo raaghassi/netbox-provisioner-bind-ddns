@@ -1,12 +1,13 @@
 import logging
 import socketserver
 import socket
+from typing import Tuple
 
 logger = logging.getLogger("netbox_bind_ddns.server")
 
 
 class DNSAddressMixin:
-    def _resolve_address(self, server_address, socktype, proto):
+    def _resolve_address(self, server_address, socktype, proto) -> Tuple[str, int]:
         host, port = server_address
 
         infos = socket.getaddrinfo(
@@ -20,7 +21,10 @@ class DNSAddressMixin:
 
         family, _, _, _, sockaddr = infos[0]
         self.address_family = family
-        return sockaddr
+        # getaddrinfo() can return sockaddr tuples for several address families;
+        # we only ever bind to AF_INET/AF_INET6, where sockaddr is always the
+        # (host, port[, ...]) form that socketserver expects.
+        return (sockaddr[0], sockaddr[1])  # type: ignore[index]
 
 
 class TCPDNSServer(DNSAddressMixin, socketserver.TCPServer):

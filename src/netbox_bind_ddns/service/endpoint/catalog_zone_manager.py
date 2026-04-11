@@ -1,15 +1,18 @@
 import logging
 import threading
-import dns.query
-import dns.message
-import dns.tsigkeyring
-import dns.name
-import dns.zone
-import dns.rdatatype
-import dns.rdataclass
-import dns.rdtypes
+from typing import Optional
 import dns.exception
+import dns.message
+import dns.name
+import dns.query
+import dns.rdata
+import dns.rdataclass
+import dns.rdataset
+import dns.rdatatype
+import dns.rdtypes
 import dns.renderer
+import dns.tsigkeyring
+import dns.zone
 from netbox_dns.models import Zone
 from netbox_dns.choices import ZoneStatusChoices
 from netbox_bind_ddns.models import IntegerKeyValueSetting, CatalogZoneMemberIdentifier
@@ -20,7 +23,7 @@ logger = logging.getLogger("netbox_bind_ddns.catz")
 
 _LOCK = threading.Lock()
 _SERIAL_MAX = 0xFFFFFFFF
-_SERIAL_OBJ = None
+_SERIAL_OBJ: Optional[IntegerKeyValueSetting] = None
 _PREVIOUS_LAST_ZONE_UPDATE = None
 
 
@@ -33,33 +36,35 @@ def _init_serial() -> None:
     global _SERIAL_OBJ
 
     try:
-        _SERIAL_OBJ = IntegerKeyValueSetting.objects.get(
-            key="catalog-zone-soa-serial"
-        )
+        obj = IntegerKeyValueSetting.objects.get(key="catalog-zone-soa-serial")
         logger.debug(
-            f"Catalog zone SOA serial number {_SERIAL_OBJ.value} loaded from database"
+            f"Catalog zone SOA serial number {obj.value} loaded from database"
         )
     except IntegerKeyValueSetting.DoesNotExist:
-        _SERIAL_OBJ = IntegerKeyValueSetting.objects.create(
+        obj = IntegerKeyValueSetting.objects.create(
             key="catalog-zone-soa-serial", value=1
         )
         logger.debug(
-            f"Catalog zone SOA serial number was not set in the database. Set to {_SERIAL_OBJ.value}"
+            f"Catalog zone SOA serial number was not set in the database. Set to {obj.value}"
         )
+    _SERIAL_OBJ = obj
 
 
 def _increment_serial() -> None:
-    if 0 < _SERIAL_OBJ.value < _SERIAL_MAX:
-        _SERIAL_OBJ.value += 1
-        _SERIAL_OBJ.save()
+    assert _SERIAL_OBJ is not None, "_init_serial() must be called before _increment_serial()"
+    obj = _SERIAL_OBJ
+    current = obj.value
+    if 0 < current < _SERIAL_MAX:
+        obj.value = current + 1
+        obj.save()
     else:
         logger.warning(
-            f"Failed to increment catalog serial {_SERIAL_OBJ.value}. Will overflow serial back to 1"
+            f"Failed to increment catalog serial {current}. Will overflow serial back to 1"
         )
-        _SERIAL_OBJ.value = 1
-        _SERIAL_OBJ.save()
+        obj.value = 1
+        obj.save()
         logger.debug(
-            f"Catalog zone SOA serial number incremented to {_SERIAL_OBJ.value}"
+            f"Catalog zone SOA serial number incremented to {obj.value}"
         )
 
 
@@ -96,10 +101,10 @@ def create_zone(name, view_name) -> dns.zone.Zone:
             .first()
         )
 
-        last_zone_update = getattr(latest_zone, "last_updated", None)
+        last_zone_update = latest_zone.last_updated if latest_zone is not None else None
 
         if _PREVIOUS_LAST_ZONE_UPDATE != last_zone_update:
-            if last_zone_update is not None:
+            if latest_zone is not None:
                 logger.debug(
                     f"Zone {latest_zone.name} was updated in view {latest_zone.view.name}"
                 )
@@ -154,6 +159,7 @@ def create_zone(name, view_name) -> dns.zone.Zone:
     rtype = dns.rdatatype.SOA
     mname = dns.name.from_text("invalid", dns.name.root)
     rname = dns.name.from_text("invalid", dns.name.root)
+    assert _SERIAL_OBJ is not None, "_init_serial() must be called before create_zone()"
     serial = _SERIAL_OBJ.value
     refresh = 60
     retry = 10
@@ -196,7 +202,7 @@ def create_zone(name, view_name) -> dns.zone.Zone:
     return zone
 
 
-def _generate_member_identifier() -> None:
+def _generate_member_identifier() -> str:
     return b32encode(uuid4().bytes)[0:26].lower().decode('UTF-8')
 
 

@@ -1,7 +1,9 @@
-import dns.zone
-import dns.rdatatype
+import dns.name
+import dns.rdata
 import dns.rdataclass
-import dns.exception
+import dns.rdataset
+import dns.rdatatype
+import dns.zone
 import netbox_dns.models
 
 

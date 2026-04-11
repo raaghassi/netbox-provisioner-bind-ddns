@@ -29,8 +29,8 @@ class CatalogZoneMemberIdentifier(models.Model):
     class Meta:
         ordering = ("name",)
 
-    def __str__(self):
-        return self.name
+    def __str__(self) -> str:
+        return str(self.name)
 
 
 class ZoneChangelog(models.Model):
