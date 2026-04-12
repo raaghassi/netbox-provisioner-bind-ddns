@@ -32,13 +32,13 @@ def record_pre_save(sender, instance, **kwargs):
 def record_post_save(sender, instance, created, **kwargs):
     """Write IXFR changelog entries for incremental zone transfers."""
     try:
-        serial = instance.zone.soa_serial
+        new_serial = instance.zone.soa_serial
         ttl = instance.ttl or instance.zone.default_ttl
 
         if created:
             ZoneChangelog.objects.create(
                 zone=instance.zone,
-                serial=serial,
+                serial=new_serial,
                 action="ADD",
                 name=instance.name,
                 rdtype=instance.type,
@@ -56,9 +56,22 @@ def record_post_save(sender, instance, created, **kwargs):
                     or old["zone_id"] != instance.zone_id
                 )
                 if changed:
+                    # If the record moved between zones, the DELETE must be
+                    # recorded against the old zone's own serial so its IXFR
+                    # journal stays consistent.  Otherwise reuse new_serial.
+                    if old["zone_id"] != instance.zone_id:
+                        try:
+                            delete_serial = Zone.objects.only("soa_serial").get(
+                                pk=old["zone_id"]
+                            ).soa_serial
+                        except Zone.DoesNotExist:
+                            delete_serial = new_serial
+                    else:
+                        delete_serial = new_serial
+
                     ZoneChangelog.objects.create(
                         zone_id=old["zone_id"],
-                        serial=serial,
+                        serial=delete_serial,
                         action="DELETE",
                         name=old["name"],
                         rdtype=old["type"],
@@ -67,7 +80,7 @@ def record_post_save(sender, instance, created, **kwargs):
                     )
                     ZoneChangelog.objects.create(
                         zone=instance.zone,
-                        serial=serial,
+                        serial=new_serial,
                         action="ADD",
                         name=instance.name,
                         rdtype=instance.type,

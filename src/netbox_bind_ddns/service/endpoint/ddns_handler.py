@@ -23,6 +23,7 @@ import dns.rdatatype
 import dns.tsig
 from django.db import close_old_connections, transaction
 
+from netbox_dns.choices import RecordStatusChoices, ZoneStatusChoices
 from netbox_dns.models import Record, Zone
 
 logger = logging.getLogger("netbox_bind_ddns.ddns")
@@ -125,7 +126,7 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
             nb_zone = Zone.objects.get(
                 name=zone_name,
                 view=nb_view,
-                status="active",
+                status=ZoneStatusChoices.STATUS_ACTIVE,
             )
         except Zone.DoesNotExist:
             logger.warning("DDNS NOTAUTH from %s: zone %s (view %s) not in NetBox", peer, zone_name, nb_view.name)
@@ -183,21 +184,33 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
             if rrset.rdclass == dns.rdataclass.ANY:
                 if rrset.rdtype == dns.rdatatype.ANY:
                     # Name is in use
-                    if not Record.objects.filter(zone=nb_zone, name=rel_name, status="active").exists():
+                    if not Record.objects.filter(
+                        zone=nb_zone, name=rel_name,
+                        status=RecordStatusChoices.STATUS_ACTIVE,
+                    ).exists():
                         return dns.rcode.NXDOMAIN
                 else:
                     # RRset exists (value independent)
-                    if not Record.objects.filter(zone=nb_zone, name=rel_name, type=rdtype_text, status="active").exists():
+                    if not Record.objects.filter(
+                        zone=nb_zone, name=rel_name, type=rdtype_text,
+                        status=RecordStatusChoices.STATUS_ACTIVE,
+                    ).exists():
                         return dns.rcode.NXRRSET
 
             elif rrset.rdclass == dns.rdataclass.NONE:
                 if rrset.rdtype == dns.rdatatype.ANY:
                     # Name is not in use
-                    if Record.objects.filter(zone=nb_zone, name=rel_name, status="active").exists():
+                    if Record.objects.filter(
+                        zone=nb_zone, name=rel_name,
+                        status=RecordStatusChoices.STATUS_ACTIVE,
+                    ).exists():
                         return dns.rcode.YXDOMAIN
                 else:
                     # RRset does not exist
-                    if Record.objects.filter(zone=nb_zone, name=rel_name, type=rdtype_text, status="active").exists():
+                    if Record.objects.filter(
+                        zone=nb_zone, name=rel_name, type=rdtype_text,
+                        status=RecordStatusChoices.STATUS_ACTIVE,
+                    ).exists():
                         return dns.rcode.YXRRSET
 
             elif rrset.rdclass == dns.rdataclass.IN:
@@ -205,7 +218,8 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
                 for rdata in rrset:
                     value = rdata.to_text()
                     if not Record.objects.filter(
-                        zone=nb_zone, name=rel_name, type=rdtype_text, value=value, status="active"
+                        zone=nb_zone, name=rel_name, type=rdtype_text, value=value,
+                        status=RecordStatusChoices.STATUS_ACTIVE,
                     ).exists():
                         return dns.rcode.NXRRSET
 
@@ -288,8 +302,8 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
                 if existing.value != value:
                     existing.value = value
                     changed = True
-                if existing.status != "active":
-                    existing.status = "active"
+                if existing.status != RecordStatusChoices.STATUS_ACTIVE:
+                    existing.status = RecordStatusChoices.STATUS_ACTIVE
                     changed = True
                 if ttl is not None and existing.ttl != ttl:
                     existing.ttl = ttl
@@ -307,8 +321,8 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
 
             if existing:
                 changed = False
-                if existing.status != "active":
-                    existing.status = "active"
+                if existing.status != RecordStatusChoices.STATUS_ACTIVE:
+                    existing.status = RecordStatusChoices.STATUS_ACTIVE
                     changed = True
                 if ttl is not None and existing.ttl != ttl:
                     existing.ttl = ttl
@@ -323,7 +337,7 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
             type=rdtype,
             value=value,
             ttl=ttl,
-            status="active",
+            status=RecordStatusChoices.STATUS_ACTIVE,
             disable_ptr=is_address,
         )
         record.save()

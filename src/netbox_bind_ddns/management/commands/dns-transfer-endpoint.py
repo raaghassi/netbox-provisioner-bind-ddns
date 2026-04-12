@@ -7,6 +7,7 @@ import dns.tsig
 
 from django.core.management.base import BaseCommand
 from django.conf import settings
+from django.db import close_old_connections
 from netbox_dns.models import View
 from netbox_bind_ddns.service.endpoint.request_handler import UDPRequestHandler, TCPRequestHandler
 from netbox_bind_ddns.service.endpoint.dns_server import (
@@ -157,6 +158,8 @@ class Command(BaseCommand):
 
         while True:
             time.sleep(300)  # Run every 5 minutes
+            # Drop any stale DB connection this daemon thread is holding.
+            close_old_connections()
             try:
                 zone_ids = (
                     ZoneChangelog.objects.values_list("zone_id", flat=True).distinct()

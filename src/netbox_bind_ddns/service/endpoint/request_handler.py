@@ -73,7 +73,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
             value = record.value
             if rdtype == dns.rdatatype.TXT:
                 if value.startswith('"') and value.endswith('"'):
-                    value = value[1:-1].replace('" "', "").replace('"', '"')
+                    value = value[1:-1].replace('" "', "").replace('"', '')
 
                 if len(value) > 255:
                     chunks = [
@@ -419,8 +419,8 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
             self._denyRequestBadTSIG(wire, dns.rcode.BADKEY)
             return
 
-        except Exception as e:
-            logger.error("Error parsing query: ", e)
+        except Exception:
+            logger.exception(f"Error parsing query from {peer}")
             return
 
         if len(query.question) != 1:
@@ -495,10 +495,8 @@ class UDPRequestHandler(DNSBaseRequestHandler):
         peer = self.client_address[0]
         try:
             self._handle_dns_query(data)
-        except Exception as e:
-            logger.error(f"Error handling request from {peer}: {e}")
-            import traceback
-            traceback.print_exc()
+        except Exception:
+            logger.exception(f"Error handling request from {peer}")
 
 
 class TCPRequestHandler(DNSBaseRequestHandler):
@@ -536,7 +534,5 @@ class TCPRequestHandler(DNSBaseRequestHandler):
 
         except socket.timeout:
             logger.debug(f"Connection from {peer} timed out")
-        except Exception as e:
-            logger.error(f"Error handling request from {peer}: {e}")
-            import traceback
-            traceback.print_exc()
+        except Exception:
+            logger.exception(f"Error handling request from {peer}")

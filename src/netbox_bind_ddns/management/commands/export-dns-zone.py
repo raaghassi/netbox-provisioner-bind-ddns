@@ -30,13 +30,9 @@ class Command(BaseCommand):
 
         try:
             nb_zone = netbox_dns.models.Zone.objects.get(view__name=view_name, name=zone_name)
+        except netbox_dns.models.Zone.DoesNotExist:
+            raise CommandError(f"Zone '{zone_name}' in view '{view_name}' not found in NetBox.")
 
-            if nb_zone:
-                export_bind_zone_file(nb_zone, file_path=file_path)
-            else:
-                raise CommandError("Zone not found in Netbox.")
-
-        except Exception as e:
-            raise CommandError(f"Failed to export zone: {e}")
+        export_bind_zone_file(nb_zone, file_path=file_path)
 
         self.stdout.write(self.style.SUCCESS(f"Zone '{zone_name}' exported to '{file_path}'"))
