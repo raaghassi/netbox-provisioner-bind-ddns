@@ -2,7 +2,8 @@
 HTTP webhook handler for NetBox event rules.
 
 Receives webhook POSTs from NetBox when DNS records change,
-and sends DNS NOTIFY to secondary servers to trigger zone re-transfer.
+resolves NS targets from NetBox, and sends DNS NOTIFY to all
+authoritative servers to trigger zone re-transfer.
 """
 import hashlib
 import hmac
@@ -22,8 +23,6 @@ class WebhookHandler(BaseHTTPRequestHandler):
     Handles NetBox webhook POST requests.
 
     Server attributes expected:
-      self.server.notify_target   - str IP address for NOTIFY
-      self.server.notify_port     - int port for NOTIFY
       self.server.tsig_keyring    - dict of {dns.name.Name: dns.tsig.Key}
       self.server.webhook_secret  - str shared secret for HMAC verification (optional)
     """
@@ -65,13 +64,11 @@ class WebhookHandler(BaseHTTPRequestHandler):
         event = payload.get("event", "unknown")
         logger.info("Webhook %s for zone %s from %s", event, zone_name, self.client_address[0])
 
-        # Send NOTIFY in background thread
+        # Resolve NS targets and send NOTIFY to all in background thread
         threading.Thread(
-            target=notify.send_notify,
+            target=notify.notify_zone,
             kwargs={
                 "zone_name": zone_name,
-                "target": self.server.notify_target,
-                "port": self.server.notify_port,
                 "tsig_keyring": self.server.tsig_keyring,
             },
             daemon=True,
@@ -101,10 +98,7 @@ class WebhookHandler(BaseHTTPRequestHandler):
 class WebhookServer(HTTPServer):
     """HTTP server for receiving NetBox webhooks."""
 
-    def __init__(self, server_address, notify_target, notify_port,
-                 tsig_keyring=None, webhook_secret=None):
+    def __init__(self, server_address, tsig_keyring=None, webhook_secret=None):
         super().__init__(server_address, WebhookHandler)
-        self.notify_target = notify_target
-        self.notify_port = notify_port
         self.tsig_keyring = tsig_keyring
         self.webhook_secret = webhook_secret

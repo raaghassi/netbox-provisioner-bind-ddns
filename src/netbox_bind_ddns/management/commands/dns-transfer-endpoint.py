@@ -89,14 +89,6 @@ class Command(BaseCommand):
             help="HTTP webhook listener port for NetBox event rules (0 = disabled)"
         )
         parser.add_argument(
-            "--notify-target", type=str, default="",
-            help="IP address of secondary DNS server to NOTIFY on zone changes"
-        )
-        parser.add_argument(
-            "--notify-port", type=int, default=53,
-            help="DNS port of secondary server for NOTIFY (default: 53)"
-        )
-        parser.add_argument(
             "--webhook-secret", type=str, default="",
             help="Shared secret for verifying NetBox webhook signatures"
         )
@@ -188,8 +180,6 @@ class Command(BaseCommand):
         address = options["address"]
         ddns_port = options["ddns_port"]
         webhook_port = options["webhook_port"]
-        notify_target = options["notify_target"]
-        notify_port = options["notify_port"]
         webhook_secret = options["webhook_secret"]
         webhook_url = options["webhook_url"]
 
@@ -262,10 +252,6 @@ class Command(BaseCommand):
 
         # ---- Webhook server for NOTIFY ----
         if webhook_port > 0:
-            if not notify_target:
-                raise RuntimeError(
-                    "netbox_bind_ddns: --notify-target is required when --webhook-port is set"
-                )
             if not webhook_url:
                 raise RuntimeError(
                     "netbox_bind_ddns: --webhook-url is required when --webhook-port is set"
@@ -275,14 +261,12 @@ class Command(BaseCommand):
 
             webhook_server = WebhookServer(
                 (address, webhook_port),
-                notify_target=notify_target,
-                notify_port=notify_port,
                 tsig_keyring=self.keyring,
                 webhook_secret=webhook_secret or None,
             )
             threading.Thread(target=webhook_server.serve_forever, daemon=True).start()
-            logger.info("Webhook listener on %s:%d (notify -> %s:%d)",
-                        address, webhook_port, notify_target, notify_port)
+            logger.info("Webhook listener on %s:%d (NOTIFY targets from NS records)",
+                        address, webhook_port)
 
             # Register the event rule and webhook in NetBox
             try:
