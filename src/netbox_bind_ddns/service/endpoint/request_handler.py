@@ -389,7 +389,16 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
             original_id=query.id,
         )
 
-        wire = response.to_wire()
+        try:
+            wire = response.to_wire()
+        except dns.exception.TooBig:
+            logger.info(
+                f"{peer} IXFR {nb_view.name}/{dname} "
+                f"response too large ({len(changes)} changes), falling back to AXFR"
+            )
+            self._handle_axfr_request(query, zone, peer, nb_view, dname)
+            return
+
         self._send_response(wire)
 
         logger.info(
