@@ -49,6 +49,8 @@ def _netbox_event_context():
         "POST": {},
         "GET": {},
         "FILES": {},
+        "COOKIES": {},
+        "path": "/ddns-update/",
         "user": user,
         "id": uuid.uuid4(),
     })
