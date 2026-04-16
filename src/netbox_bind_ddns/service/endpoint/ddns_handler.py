@@ -8,7 +8,6 @@ import logging
 import socket
 import socketserver
 import uuid
-from contextlib import ExitStack
 from typing import TYPE_CHECKING, Union
 
 import dns.flags
@@ -37,10 +36,12 @@ def _netbox_event_context():
     .delete() trigger EventRules (webhooks).  Without this context,
     the core signal handlers see current_request == None and skip
     event enqueueing entirely.
+
+    Uses NetBox's own apply_request_processors() context manager
+    which handles all registered request processors.
     """
     from django.contrib.auth import get_user_model
-    from netbox.registry import registry
-    from utilities.request import NetBoxFakeRequest
+    from utilities.request import NetBoxFakeRequest, apply_request_processors
 
     User = get_user_model()
     user = User.objects.filter(is_superuser=True).first()
@@ -50,15 +51,13 @@ def _netbox_event_context():
         "GET": {},
         "FILES": {},
         "COOKIES": {},
+        "method": "POST",
         "path": "/ddns-update/",
         "user": user,
         "id": uuid.uuid4(),
     })
 
-    stack = ExitStack()
-    for request_processor in registry["request_processors"]:
-        stack.enter_context(request_processor(request))
-    return stack
+    return apply_request_processors(request)
 
 
 class DDNSBaseHandler(socketserver.BaseRequestHandler):
