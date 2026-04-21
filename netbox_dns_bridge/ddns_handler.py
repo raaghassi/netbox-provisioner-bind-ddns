@@ -196,6 +196,12 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
                             return
 
                         # Section 3.4: Update
+                        rcode = self._validate_updates(message, nb_zone.name)
+                        if rcode != dns.rcode.NOERROR:
+                            logger.info("DDNS update rejected for %s from %s: %s", zone_name, peer, dns.rcode.to_text(rcode))
+                            self._send_rcode(message, rcode)
+                            return
+
                         self._process_updates(message, nb_zone)
 
             logger.info("DDNS UPDATE %s from %s: OK", zone_name, peer)
@@ -238,6 +244,8 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
         # The prerequisite section re-uses the answer section.
         for rrset in message.answer:
             rel_name = self._relative_name(rrset.name.to_text().rstrip("."), nb_zone.name)
+            if rel_name is None:
+                return dns.rcode.NOTZONE
             rdtype_text = dns.rdatatype.to_text(rrset.rdtype)
 
             if rrset.rdclass == dns.rdataclass.ANY:
@@ -290,6 +298,20 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
     # ------------------------------------------------------------------
     # RFC 2136 Section 3.4 — Update processing
     # ------------------------------------------------------------------
+
+    def _validate_updates(self, message, zone_name):
+        """Validate the update section before applying any database writes."""
+        for rrset in message.authority:
+            rel_name = self._relative_name(rrset.name.to_text().rstrip("."), zone_name)
+            if rel_name is None:
+                return dns.rcode.NOTZONE
+            if rrset.rdclass not in (
+                dns.rdataclass.IN,
+                dns.rdataclass.ANY,
+                dns.rdataclass.NONE,
+            ):
+                return dns.rcode.FORMERR
+        return dns.rcode.NOERROR
 
     def _process_updates(self, message, nb_zone):
         """
@@ -460,13 +482,19 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
         if fqdn_clean.endswith(suffix):
             return fqdn_clean[: -len(suffix)]
 
-        # Fallback: return as-is (should not happen for valid updates)
-        return fqdn_clean
+        # RFC 2136 requires all prerequisite/update names to be inside the zone.
+        return None
 
     def _send_rcode(self, query, rcode):
         """Build and send an UPDATE response with the given rcode."""
         response = dns.message.make_response(query)
         response.set_rcode(rcode)
+        if query.had_tsig and query.keyname in self.server.keyring:
+            response.use_tsig(
+                self.server.keyring,
+                keyname=query.keyname,
+                original_id=query.id,
+            )
         self._send_response(response.to_wire())
 
     def _deny_bad_tsig(self, wire, tsig_error):
