@@ -14,6 +14,7 @@ import logging
 from .logger import get_logger
 from netbox_dns.models import Zone, Record
 from netbox_dns.choices import ZoneStatusChoices, RecordStatusChoices
+from django.db import close_old_connections
 from netbox_dns_bridge import catalog_zone_manager as catzm
 from .utils import format_txt_value
 
@@ -266,6 +267,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
         logger.info(f"{peer} AXFR {nb_view.name}/{dname}")
 
     def _handle_dns_query(self, wire) -> None:
+        close_old_connections()
         peer = self.client_address[0]
         try:
             query = dns.message.from_wire(
