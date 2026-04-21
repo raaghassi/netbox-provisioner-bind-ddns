@@ -325,9 +325,16 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
           class ANY,  type ANY, TTL = 0, empty -> Delete all sets  (§2.5.3)
           class NONE, type T,  TTL = 0, rdata present -> Delete RR (§2.5.4)
 
-        NOTE: dnspython represents "Delete individual RR" internally with
-        rdclass=IN and ttl=0 (not rdclass=NONE), so TTL must be used as
-        the discriminator within the class=IN branch.
+        NOTE: dnspython normalises the wire rdclass to IN for all four
+        operations when parsing UPDATE messages. Discriminating requires
+        TTL and rdata_count:
+
+          TTL > 0                              -> §2.5.1 Add RR
+          TTL = 0, rdata present               -> §2.5.4 Delete individual RR
+          TTL = 0, rdata empty, type != ANY    -> §2.5.2 Delete RRset
+          TTL = 0, rdata empty, type == ANY    -> §2.5.3 Delete all RRsets
+
+        Kea's CHG_REMOVE uses §2.5.2 (rdata empty), not §2.5.4.
         """
         ddns_tag = self.server.ddns_tag
 
@@ -350,24 +357,27 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
                     for rdata in rrset:
                         value = rdata.to_text()
                         self._add_record(nb_zone, rel_name, rdtype_text, value, rrset.ttl, ddns_tag)
-                else:
-                    # §2.5.4 Delete individual RR (dnspython normalises wire
-                    # class=NONE to rdclass=IN, preserving TTL=0 as the signal)
+                elif len(rrset) > 0:
+                    # §2.5.4 Delete individual RR (wire class=NONE)
                     for rdata in rrset:
                         value = rdata.to_text()
                         self._delete_record(nb_zone, rel_name, rdtype_text, value)
-
-            elif rrset.rdclass == dns.rdataclass.ANY:
-                if rrset.rdtype == dns.rdatatype.ANY:
-                    # §2.5.3 Delete all RRsets from a name
+                elif rrset.rdtype == dns.rdatatype.ANY:
+                    # §2.5.3 Delete all RRsets from a name (wire class=ANY type=ANY)
                     self._delete_records_by_name(nb_zone, rel_name)
                 else:
-                    # §2.5.2 Delete an RRset
+                    # §2.5.2 Delete RRset (wire class=ANY type=T) — Kea's CHG_REMOVE
+                    self._delete_records_by_name_type(nb_zone, rel_name, rdtype_text)
+
+            elif rrset.rdclass == dns.rdataclass.ANY:
+                # Defensive: handle clients that preserve wire class=ANY
+                if rrset.rdtype == dns.rdatatype.ANY:
+                    self._delete_records_by_name(nb_zone, rel_name)
+                else:
                     self._delete_records_by_name_type(nb_zone, rel_name, rdtype_text)
 
             elif rrset.rdclass == dns.rdataclass.NONE:
                 # Defensive: handle clients that preserve wire class=NONE
-                # (dnspython itself normalises to IN, but other parsers may not).
                 for rdata in rrset:
                     value = rdata.to_text()
                     self._delete_record(nb_zone, rel_name, rdtype_text, value)
