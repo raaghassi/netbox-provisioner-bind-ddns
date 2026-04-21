@@ -158,7 +158,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
             else:
                 response.set_rcode(dns.rcode.REFUSED)
                 response.use_tsig(
-                    self.server.keyring,
+                    {},
                     keyname=query.keyname,
                     tsig_error=dns.rcode.BADKEY,
                 )
