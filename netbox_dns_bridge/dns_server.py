@@ -15,7 +15,10 @@ class DNSAddressMixin:
 
         family, _, _, _, sockaddr = infos[0]
         self.address_family = family
-        return sockaddr
+        # getaddrinfo() can return sockaddr tuples for several address families;
+        # we only ever bind to AF_INET/AF_INET6, where sockaddr is always the
+        # (host, port[, ...]) form that socketserver expects.
+        return (sockaddr[0], sockaddr[1])
 
 
 class TCPDNSServer(DNSAddressMixin, socketserver.ThreadingMixIn, socketserver.TCPServer):
