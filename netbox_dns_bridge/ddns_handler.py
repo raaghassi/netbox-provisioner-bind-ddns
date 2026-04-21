@@ -211,6 +211,7 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
             threading.Thread(
                 target=notify.notify_zone,
                 kwargs={
+                    "zone_id": nb_zone.id,
                     "zone_name": zone_name,
                     "tsig_keyring": self.server.keyring,
                     "tsig_view_map": {

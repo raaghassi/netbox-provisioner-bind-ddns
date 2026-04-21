@@ -21,7 +21,7 @@ import dns.rdatatype
 logger = logging.getLogger("netbox_dns_bridge.notify")
 
 
-def resolve_notify_targets(zone_name):
+def resolve_notify_targets(zone_id):
     """
     Look up SeenTransferClient entries for a zone to find NOTIFY targets.
 
@@ -29,7 +29,7 @@ def resolve_notify_targets(zone_name):
     previously transferred this zone. Port is always 53 (standard DNS).
 
     Args:
-        zone_name: Zone name without trailing dot (e.g. "mgmt.aghassi.net")
+        zone_id: NetBox zone primary key
     """
     from django.db import close_old_connections
     from netbox_dns_bridge.models import SeenTransferClient
@@ -38,33 +38,34 @@ def resolve_notify_targets(zone_name):
 
     targets = list(
         SeenTransferClient.objects.filter(
-            zone__name=zone_name,
+            zone_id=zone_id,
         ).values_list("address", "view__name").distinct()
     )
 
     if not targets:
-        logger.debug("No transfer clients recorded for zone %s", zone_name)
+        logger.debug("No transfer clients recorded for zone_id=%s", zone_id)
         return []
 
     result = [(ip, 53, view_name) for ip, view_name in targets]
     logger.debug(
-        "Resolved %d NOTIFY targets for zone %s: %s",
-        len(result), zone_name, result,
+        "Resolved %d NOTIFY targets for zone_id=%s: %s",
+        len(result), zone_id, result,
     )
     return result
 
 
-def notify_zone(zone_name, tsig_keyring=None, tsig_view_map=None):
+def notify_zone(zone_id, zone_name, tsig_keyring=None, tsig_view_map=None):
     """
     Send DNS NOTIFY to all known transfer clients for a zone.
 
     Args:
+        zone_id: NetBox zone primary key
         zone_name: Zone name without trailing dot (e.g. "mgmt.aghassi.net")
         tsig_keyring: Optional dict of {dns.name.Name: dns.tsig.Key} for TSIG signing.
         tsig_view_map: Optional dict of {view_name_str: dns.name.Name} mapping
             view names to TSIG key names for per-target key selection.
     """
-    targets = resolve_notify_targets(zone_name)
+    targets = resolve_notify_targets(zone_id)
     if not targets:
         return
 

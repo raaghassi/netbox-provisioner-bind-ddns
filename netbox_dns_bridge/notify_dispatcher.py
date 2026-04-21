@@ -15,7 +15,7 @@ from . import notify
 logger = logging.getLogger("netbox_dns_bridge.notify_dispatcher")
 
 _lock = threading.Lock()
-_pending: dict[str, threading.Timer] = {}
+_pending: dict[int, threading.Timer] = {}
 _tsig_keyring = None
 _tsig_view_map = None
 _suppress = threading.local()
@@ -88,30 +88,31 @@ def get_tsig_view_map():
         return _tsig_view_map
 
 
-def schedule_notify(zone_name: str):
+def schedule_notify(zone_id: int, zone_name: str):
     """Schedule a debounced NOTIFY for a zone. Safe to call from signal handlers."""
     if getattr(_suppress, "active", False):
         return
 
     with _lock:
-        existing = _pending.pop(zone_name, None)
+        existing = _pending.pop(zone_id, None)
         if existing:
             existing.cancel()
-        timer = threading.Timer(DEBOUNCE_SECONDS, _fire_notify, args=(zone_name,))
+        timer = threading.Timer(DEBOUNCE_SECONDS, _fire_notify, args=(zone_id, zone_name))
         timer.daemon = True
         timer.start()
-        _pending[zone_name] = timer
+        _pending[zone_id] = timer
 
 
-def _fire_notify(zone_name: str):
+def _fire_notify(zone_id: int, zone_name: str):
     """Called when debounce timer expires. Sends NOTIFY in a background thread."""
     with _lock:
-        _pending.pop(zone_name, None)
+        _pending.pop(zone_id, None)
 
     logger.debug("Debounce expired for zone %s — sending NOTIFY", zone_name)
     threading.Thread(
         target=notify.notify_zone,
         kwargs={
+            "zone_id": zone_id,
             "zone_name": zone_name,
             "tsig_keyring": get_tsig_keyring(),
             "tsig_view_map": get_tsig_view_map(),
