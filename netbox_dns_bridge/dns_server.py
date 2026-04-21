@@ -18,8 +18,9 @@ class DNSAddressMixin:
         return sockaddr
 
 
-class TCPDNSServer(DNSAddressMixin, socketserver.TCPServer):
+class TCPDNSServer(DNSAddressMixin, socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
+    daemon_threads = True
 
     def __init__(self, server_address, handler_class, keyring, tsig_view_map):
         sockaddr = self._resolve_address(
@@ -32,8 +33,9 @@ class TCPDNSServer(DNSAddressMixin, socketserver.TCPServer):
         self.tsig_view_map = tsig_view_map
 
 
-class UDPDNSServer(DNSAddressMixin, socketserver.UDPServer):
+class UDPDNSServer(DNSAddressMixin, socketserver.ThreadingMixIn, socketserver.UDPServer):
     allow_reuse_address = True
+    daemon_threads = True
 
     def __init__(self, server_address, handler_class, keyring, tsig_view_map):
         sockaddr = self._resolve_address(
