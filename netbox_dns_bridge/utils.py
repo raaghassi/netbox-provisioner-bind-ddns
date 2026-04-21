@@ -40,11 +40,14 @@ def export_bind_zone_file(nb_zone: netbox_dns.models.Zone, file_path: str):
             value = format_txt_value(value)
 
         # Create rdata object
-        rdata = dns.rdata.from_text(rdclass, rdatatype, value)
+        rdata = dns.rdata.from_text(
+            rdclass, rdatatype, value,
+            relativize=False, origin=dp_zone.origin,
+        )
 
-        # Create rdataset
+        ttl = record.ttl or nb_zone.default_ttl
         rdataset = dns.rdataset.Rdataset(rdclass, rdatatype)
-        rdataset.add(rdata, record.ttl)
+        rdataset.add(rdata, ttl)
 
         # Add to zone
         node = dp_zone.find_node(rname, create=True)
