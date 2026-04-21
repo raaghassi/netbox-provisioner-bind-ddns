@@ -1,8 +1,9 @@
-import os
-import dns.zone
-import dns.rdatatype
+import dns.name
+import dns.rdata
 import dns.rdataclass
-import dns.exception
+import dns.rdataset
+import dns.rdatatype
+import dns.zone
 import netbox_dns.models
 
 
@@ -39,7 +40,6 @@ def export_bind_zone_file(nb_zone: netbox_dns.models.Zone, file_path: str):
         if rdatatype == dns.rdatatype.TXT:
             value = format_txt_value(value)
 
-        # Create rdata object
         rdata = dns.rdata.from_text(
             rdclass, rdatatype, value,
             relativize=False, origin=dp_zone.origin,
@@ -49,7 +49,6 @@ def export_bind_zone_file(nb_zone: netbox_dns.models.Zone, file_path: str):
         rdataset = dns.rdataset.Rdataset(rdclass, rdatatype)
         rdataset.add(rdata, ttl)
 
-        # Add to zone
         node = dp_zone.find_node(rname, create=True)
         node.rdatasets.append(rdataset)
 

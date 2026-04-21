@@ -1,27 +1,29 @@
-import threading
-import dns.query
-import dns.message
-import dns.tsigkeyring
-import dns.name
-import dns.zone
-import dns.rdatatype
-import dns.rdataclass
-import dns.rdtypes
-import dns.exception
-import dns.renderer
 import logging
-from .logger import get_logger
+import threading
+from typing import Optional
+import dns.exception
+import dns.message
+import dns.name
+import dns.query
+import dns.rdata
+import dns.rdataclass
+import dns.rdataset
+import dns.rdatatype
+import dns.rdtypes
+import dns.renderer
+import dns.tsigkeyring
+import dns.zone
 from netbox_dns.models import Zone
 from netbox_dns.choices import ZoneStatusChoices
 from netbox_dns_bridge.models import IntegerKeyValueSetting, CatalogZoneMemberIdentifier
 from uuid import uuid4
 from base64 import b32encode
 
-logger = get_logger(__name__)
+logger = logging.getLogger("netbox_dns_bridge.catz")
 
 _LOCK = threading.Lock()
 _SERIAL_MAX = 0xFFFFFFFF
-_SERIAL_OBJ = None
+_SERIAL_OBJ: Optional[IntegerKeyValueSetting] = None
 _PREVIOUS_LAST_ZONE_UPDATE = None
 
 
@@ -30,46 +32,42 @@ def init() -> None:
     _create_missing_member_identifiers()
 
 
-# Following function loads the last serial from the DB. No return value
-# but it sets the setting "catalog_serial" or terminates the plugin on failure.
 def _init_serial() -> None:
     global _SERIAL_OBJ
 
     try:
-        _SERIAL_OBJ = IntegerKeyValueSetting.objects.get(key="catalog-zone-soa-serial")
-        logger.info(
-            f"Catalog zone SOA serial number {_SERIAL_OBJ.value} loaded from database"
+        obj = IntegerKeyValueSetting.objects.get(key="catalog-zone-soa-serial")
+        logger.debug(
+            f"Catalog zone SOA serial number {obj.value} loaded from database"
         )
     except IntegerKeyValueSetting.DoesNotExist:
-        _SERIAL_OBJ = IntegerKeyValueSetting.objects.create(
+        obj = IntegerKeyValueSetting.objects.create(
             key="catalog-zone-soa-serial", value=1
         )
         logger.debug(
-            f"Catalog zone SOA serial number was not set in the database. Set to {_SERIAL_OBJ.value}"
+            f"Catalog zone SOA serial number was not set in the database. Set to {obj.value}"
         )
-
-
-def _set_serial(new_serial: int) -> bool:
-    global _SERIAL_OBJ
-
-    if 0 < new_serial < _SERIAL_MAX:
-        _SERIAL_OBJ.value = new_serial
-        _SERIAL_OBJ.save()
-        return True
-    else:
-        return False
+    _SERIAL_OBJ = obj
 
 
 def _increment_serial() -> None:
-    if not _set_serial(_SERIAL_OBJ.value + 1):
+    assert _SERIAL_OBJ is not None, "_init_serial() must be called before _increment_serial()"
+    obj = _SERIAL_OBJ
+    current = obj.value
+    if 0 < current < _SERIAL_MAX:
+        obj.value = current + 1
+        obj.save()
+    else:
         logger.warning(
-            f"Catalog serial {_SERIAL_OBJ.value} reached max — wrapping back to 1"
+            f"Failed to increment catalog serial {current}. Will overflow serial back to 1"
         )
-        _set_serial(1)
-    logger.debug(f"Catalog zone SOA serial number is now {_SERIAL_OBJ.value}")
+        obj.value = 1
+        obj.save()
+        logger.debug(
+            f"Catalog zone SOA serial number incremented to {obj.value}"
+        )
 
 
-# If a zone has no catz identifier yet, create it:
 def _create_missing_member_identifiers() -> None:
     existing_zone_ids = CatalogZoneMemberIdentifier.objects.values_list(
         "zone_id", flat=True
@@ -86,9 +84,7 @@ def _create_missing_member_identifiers() -> None:
     ]
 
     for identifier in new_objects:
-        logger.debug(
-            f"Zone {identifier.zone} has no catz member identifier. Creating..."
-        )
+        logger.debug(f"Zone {identifier.zone} has no catz member identifier. Creating...")
 
     CatalogZoneMemberIdentifier.objects.bulk_create(
         new_objects,
@@ -98,7 +94,6 @@ def _create_missing_member_identifiers() -> None:
 
 def create_zone(name, view_name) -> dns.zone.Zone:
     global _PREVIOUS_LAST_ZONE_UPDATE
-    # Synchronize following across threads as TCP and UDP listener both use it.
     with _LOCK:
         latest_zone = (
             Zone.objects.filter(status=ZoneStatusChoices.STATUS_ACTIVE)
@@ -106,17 +101,13 @@ def create_zone(name, view_name) -> dns.zone.Zone:
             .first()
         )
 
-        last_zone_update = getattr(latest_zone, "last_updated", None)
+        last_zone_update = latest_zone.last_updated if latest_zone is not None else None
 
-        # Check if there was a zone updated since last call
-        # If no zone was found previously then this will be false since (None != None) = False
         if _PREVIOUS_LAST_ZONE_UPDATE != last_zone_update:
-            if last_zone_update is not None:
+            if latest_zone is not None:
                 logger.debug(
-                    f"Zone {latest_zone.name} was updated in view "
-                    f"{latest_zone.view.name if latest_zone.view else '(no view)'}"
+                    f"Zone {latest_zone.name} was updated in view {latest_zone.view.name if latest_zone.view else '(no view)'}"
                 )
-            # Setting previous last zone update for next iteration:
             _PREVIOUS_LAST_ZONE_UPDATE = last_zone_update
             _increment_serial()
 
@@ -138,8 +129,6 @@ def create_zone(name, view_name) -> dns.zone.Zone:
         ttl = 0
         qname = dns.name.from_text(nb_zone.name, dns.name.root)
 
-        # Create PTR record
-        # p_name = f"zid-{nb_zone.id:09d}"
         p_name = nb_zone.catz_identifier.name
 
         ptr_name = dns.name.from_text(p_name, ptr_base)
@@ -155,7 +144,6 @@ def create_zone(name, view_name) -> dns.zone.Zone:
 
         # Configure DNSSec Policy for member Zone if DNSSec is enabled
         if nb_zone.dnssec_policy:
-            # Configure policy
             rid = dns.name.from_text("group", ptr_name)
             policy_name = nb_zone.dnssec_policy.name.rstrip(" ")
             group_name = f"dnssec-policy-{policy_name}"
@@ -165,58 +153,49 @@ def create_zone(name, view_name) -> dns.zone.Zone:
             rdataset = zone.find_rdataset(rid, dns.rdatatype.TXT, create=True)
             rdataset.add(rdata, ttl)
 
-        ## Configure dnssec status for member zone
-        # status = str(1 if nb_zone.dnssec_policy else 0)
-        # rid = dns.name.from_text("enabled.dnssec.ext", ptr_name)
-        # rdata = dns.rdata.from_text(dns.rdataclass.IN, dns.rdatatype.TXT, status)
-        # rdataset = zone.find_rdataset(rid, dns.rdatatype.TXT, create=True)
-        # rdataset.add(rdata, ttl)
-
-    # SOA Record components
+    # SOA Record
     ttl = 0
     rclass = dns.rdataclass.IN
     rtype = dns.rdatatype.SOA
     mname = dns.name.from_text("invalid", dns.name.root)
     rname = dns.name.from_text("invalid", dns.name.root)
+    assert _SERIAL_OBJ is not None, "_init_serial() must be called before create_zone()"
     serial = _SERIAL_OBJ.value
     refresh = 60
     retry = 10
     expire = 1209600
     minimum = 0
 
-    # Create SOA rdata object
     soa_rdata = dns.rdata.from_text(
         rclass,
         rtype,
         f"{mname} {rname} {serial} {refresh} {retry} {expire} {minimum}",
     )
 
-    # Create Rdataset and add the RDATA to it
     soa_rdataset = dns.rdataset.Rdataset(rclass, rtype)
     soa_rdataset.add(soa_rdata, ttl)
 
-    # Add to the origin node in the zone
     node = zone.find_node(origin, create=True)
     node.rdatasets.append(soa_rdataset)
 
-    # NS record for catz.
+    # NS record
     ns_name = dns.name.from_text("invalid", dns.name.root)
-    ns_rdata = dns.rdata.from_text(dns.rdataclass.IN, dns.rdatatype.NS, str(ns_name))
+    ns_rdata = dns.rdata.from_text(
+        dns.rdataclass.IN, dns.rdatatype.NS, str(ns_name)
+    )
     ns_rdataset = dns.rdataset.Rdataset(dns.rdataclass.IN, dns.rdatatype.NS)
     ns_rdataset.add(ns_rdata, 0)
 
-    # Add to node (catz. is the origin)
     ns_node = zone.find_node(origin, create=True)
     ns_node.rdatasets.append(ns_rdataset)
 
-    # TXT record for version.catz.
-    version_name = dns.name.from_text("version", origin)  # relative to origin "catz."
+    # TXT record for version
+    version_name = dns.name.from_text("version", origin)
     txt_rdata = dns.rdata.from_text(dns.rdataclass.IN, dns.rdatatype.TXT, '"2"')
 
     txt_rdataset = dns.rdataset.Rdataset(dns.rdataclass.IN, dns.rdatatype.TXT)
     txt_rdataset.add(txt_rdata, 0)
 
-    # Add to node version.catz.
     txt_node = zone.find_node(version_name, create=True)
     txt_node.rdatasets.append(txt_rdataset)
 
@@ -224,7 +203,7 @@ def create_zone(name, view_name) -> dns.zone.Zone:
 
 
 def _generate_member_identifier() -> str:
-    return b32encode(uuid4().bytes)[0:26].lower().decode("UTF-8")
+    return b32encode(uuid4().bytes)[0:26].lower().decode('UTF-8')
 
 
 def update_member_identifier(zone: Zone) -> None:

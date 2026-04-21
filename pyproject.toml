@@ -21,10 +21,9 @@ Issues = "https://github.com/Suraxius/netbox-plugin-dns-bridge/issues"
 [tool.setuptools]
 include-package-data = true
 zip-safe = false
-package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["."]
 
 [tool.setuptools.dynamic]
 version = { attr = "netbox_dns_bridge.__version__" }

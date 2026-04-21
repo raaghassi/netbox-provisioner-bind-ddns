@@ -7,9 +7,7 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument(
-            "--view",
-            type=str,
-            help="The name of the view the Zone to be exported is in",
+            "--view", type=str, help="The name of the view the Zone to be exported is in"
         )
         parser.add_argument(
             "--zone", type=str, help="The FQDN of the Zone to be exported"
