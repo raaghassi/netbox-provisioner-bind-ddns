@@ -375,8 +375,9 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
                 try:
                     rec_name = dns.name.from_text(entry.name, origin=zone.origin) if entry.name else zone.origin
                     rdtype = dns.rdatatype.from_text(entry.rdtype)
+                    value = format_txt_value(entry.value) if rdtype == dns.rdatatype.TXT else entry.value
                     rdata = dns.rdata.from_text(
-                        dns.rdataclass.IN, rdtype, entry.value,
+                        dns.rdataclass.IN, rdtype, value,
                         relativize=False, origin=zone.origin,
                     )
                     rrsets.append(dns.rrset.from_rdata(rec_name, entry.ttl, rdata))
@@ -392,8 +393,9 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
                 try:
                     rec_name = dns.name.from_text(entry.name, origin=zone.origin) if entry.name else zone.origin
                     rdtype = dns.rdatatype.from_text(entry.rdtype)
+                    value = format_txt_value(entry.value) if rdtype == dns.rdatatype.TXT else entry.value
                     rdata = dns.rdata.from_text(
-                        dns.rdataclass.IN, rdtype, entry.value,
+                        dns.rdataclass.IN, rdtype, value,
                         relativize=False, origin=zone.origin,
                     )
                     rrsets.append(dns.rrset.from_rdata(rec_name, entry.ttl, rdata))
