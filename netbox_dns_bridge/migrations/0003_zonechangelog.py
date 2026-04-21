@@ -22,7 +22,13 @@ class Migration(migrations.Migration):
                     ),
                 ),
                 ("serial", models.BigIntegerField(db_index=True)),
-                ("action", models.CharField(max_length=10)),
+                (
+                    "action",
+                    models.CharField(
+                        choices=[("ADD", "Add"), ("DELETE", "Delete")],
+                        max_length=10,
+                    ),
+                ),
                 ("name", models.CharField(max_length=255)),
                 ("rdtype", models.CharField(max_length=10)),
                 ("value", models.TextField()),
