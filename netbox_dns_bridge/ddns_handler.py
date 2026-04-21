@@ -318,12 +318,16 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
         """
         Process the update section of the message.
 
-        Update encoding (RFC 2136 Section 3.4.2):
+        Update encoding (RFC 2136 Section 2.5):
 
-          class IN,   rdata present -> Add to RRset
-          class ANY,  type T,  empty -> Delete RRset
-          class ANY,  type ANY, empty -> Delete all RRsets from name
-          class NONE, rdata present  -> Delete individual RR
+          class IN,   TTL > 0, rdata present -> Add to RRset       (§2.5.1)
+          class ANY,  type T,  TTL = 0, empty -> Delete RRset      (§2.5.2)
+          class ANY,  type ANY, TTL = 0, empty -> Delete all sets  (§2.5.3)
+          class NONE, type T,  TTL = 0, rdata present -> Delete RR (§2.5.4)
+
+        NOTE: dnspython represents "Delete individual RR" internally with
+        rdclass=IN and ttl=0 (not rdclass=NONE), so TTL must be used as
+        the discriminator within the class=IN branch.
         """
         ddns_tag = self.server.ddns_tag
 
@@ -337,22 +341,29 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
                 continue
 
             if rrset.rdclass == dns.rdataclass.IN:
-                # Add RRs
-                ttl = rrset.ttl if rrset.ttl > 0 else None
-                for rdata in rrset:
-                    value = rdata.to_text()
-                    self._add_record(nb_zone, rel_name, rdtype_text, value, ttl, ddns_tag)
+                if rrset.ttl > 0:
+                    # §2.5.1 Add RR
+                    for rdata in rrset:
+                        value = rdata.to_text()
+                        self._add_record(nb_zone, rel_name, rdtype_text, value, rrset.ttl, ddns_tag)
+                else:
+                    # §2.5.4 Delete individual RR (dnspython normalises wire
+                    # class=NONE to rdclass=IN, preserving TTL=0 as the signal)
+                    for rdata in rrset:
+                        value = rdata.to_text()
+                        self._delete_record(nb_zone, rel_name, rdtype_text, value)
 
             elif rrset.rdclass == dns.rdataclass.ANY:
                 if rrset.rdtype == dns.rdatatype.ANY:
-                    # Delete all RRsets from a name
+                    # §2.5.3 Delete all RRsets from a name
                     self._delete_records_by_name(nb_zone, rel_name)
                 else:
-                    # Delete an RRset
+                    # §2.5.2 Delete an RRset
                     self._delete_records_by_name_type(nb_zone, rel_name, rdtype_text)
 
             elif rrset.rdclass == dns.rdataclass.NONE:
-                # Delete individual RR
+                # Defensive: handle clients that preserve wire class=NONE
+                # (dnspython itself normalises to IN, but other parsers may not).
                 for rdata in rrset:
                     value = rdata.to_text()
                     self._delete_record(nb_zone, rel_name, rdtype_text, value)
