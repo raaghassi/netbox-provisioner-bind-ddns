@@ -60,3 +60,29 @@ class ZoneChangelog(models.Model):
 
     def __str__(self):
         return f"{self.action} {self.name} {self.rdtype} (serial {self.serial})"
+
+
+class SeenTransferClient(models.Model):
+    """
+    Tracks IPs that have successfully performed zone transfers (AXFR/IXFR).
+
+    Used as the NOTIFY target list — instead of resolving NS records (which
+    miss hidden masters and don't handle anycast), we notify every client
+    that has actually transferred the zone.
+    """
+
+    address = models.GenericIPAddressField()
+    zone = models.ForeignKey(
+        "netbox_dns.Zone", on_delete=models.CASCADE, related_name="transfer_clients"
+    )
+    view = models.ForeignKey(
+        "netbox_dns.View", on_delete=models.SET_NULL, null=True, blank=True
+    )
+    last_transfer = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = [("address", "zone", "view")]
+        ordering = ["zone", "address"]
+
+    def __str__(self):
+        return f"{self.address} -> {self.zone.name} (view={self.view})"

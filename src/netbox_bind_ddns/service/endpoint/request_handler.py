@@ -23,9 +23,10 @@ import dns.rrset
 import dns.tsig
 import dns.tsigkeyring
 import dns.zone
+from django.db import close_old_connections
 from netbox_dns.models import Zone, Record
 from netbox_dns.choices import ZoneStatusChoices, RecordStatusChoices
-from netbox_bind_ddns.models import ZoneChangelog
+from netbox_bind_ddns.models import ZoneChangelog, SeenTransferClient
 from . import catalog_zone_manager as catzm
 
 logger = logging.getLogger("netbox_bind_ddns.transfer")
@@ -140,6 +141,24 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
         wire = response.to_wire(multi=False)
         self._send_response(wire)
 
+    def _record_transfer_client(self, peer, dname, nb_view) -> None:
+        """Record this client IP as having successfully transferred the zone."""
+        try:
+            close_old_connections()
+            nb_zone = Zone.objects.get(
+                name=dname,
+                view=nb_view,
+                status=ZoneStatusChoices.STATUS_ACTIVE,
+            )
+            SeenTransferClient.objects.update_or_create(
+                address=peer,
+                zone=nb_zone,
+                view=nb_view,
+                defaults={},  # last_transfer updates via auto_now
+            )
+        except Exception:
+            logger.debug("Failed to record transfer client %s for %s", peer, dname)
+
     def _handle_soa_request(self, query, soa_rrset, zone, peer, nb_view, dname) -> None:
         soa_rdata = soa_rrset[0]
 
@@ -245,6 +264,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
         wire = r.get_wire()
         self._send_response(wire)
 
+        self._record_transfer_client(peer, dname, nb_view)
         logger.debug(f"{peer} AXFR {nb_view.name}/{dname}")
 
     def _build_soa_rdata_with_serial(self, soa_rrset, serial, zone_origin):
@@ -401,6 +421,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
 
         self._send_response(wire)
 
+        self._record_transfer_client(peer, dname, nb_view)
         logger.info(
             f"{peer} IXFR {nb_view.name}/{dname} "
             f"serial {client_serial}->{current_serial} ({len(changes)} changes)"

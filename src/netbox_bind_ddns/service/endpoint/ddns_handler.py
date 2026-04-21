@@ -7,6 +7,7 @@ and translates them into netbox_dns Record create/delete operations.
 import logging
 import socket
 import socketserver
+import threading
 import uuid
 from typing import TYPE_CHECKING, Union
 
@@ -26,6 +27,9 @@ from django.db import close_old_connections, transaction
 
 from netbox_dns.choices import RecordStatusChoices, ZoneStatusChoices
 from netbox_dns.models import Record, Zone
+
+from . import notify
+from .notify_dispatcher import suppress_notify
 
 logger = logging.getLogger("netbox_bind_ddns.ddns")
 
@@ -171,24 +175,32 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
             return
 
         # ---- Process within a transaction ----
-        # Wrap in NetBox's event-tracking context so Record.save()
-        # triggers EventRules (webhook → NOTIFY → BIND zone transfer).
+        # Suppress signal-based NOTIFY (we send it explicitly after commit).
+        # Keep _netbox_event_context so other user-defined EventRules still fire.
         close_old_connections()
         try:
-            with _netbox_event_context():
-                with transaction.atomic():
-                    # Section 3.2: Prerequisites
-                    rcode = self._check_prerequisites(message, nb_zone)
-                    if rcode != dns.rcode.NOERROR:
-                        logger.info("DDNS prerequisite failed for %s from %s: %s", zone_name, peer, dns.rcode.to_text(rcode))
-                        self._send_rcode(message, rcode)
-                        return
+            with suppress_notify():
+                with _netbox_event_context():
+                    with transaction.atomic():
+                        # Section 3.2: Prerequisites
+                        rcode = self._check_prerequisites(message, nb_zone)
+                        if rcode != dns.rcode.NOERROR:
+                            logger.info("DDNS prerequisite failed for %s from %s: %s", zone_name, peer, dns.rcode.to_text(rcode))
+                            self._send_rcode(message, rcode)
+                            return
 
-                    # Section 3.4: Update
-                    self._process_updates(message, nb_zone)
+                        # Section 3.4: Update
+                        self._process_updates(message, nb_zone)
 
             logger.info("DDNS UPDATE %s from %s: OK", zone_name, peer)
             self._send_rcode(message, dns.rcode.NOERROR)
+
+            # Send NOTIFY directly (no debounce — one UPDATE = one NOTIFY)
+            threading.Thread(
+                target=notify.notify_zone,
+                kwargs={"zone_name": zone_name, "tsig_keyring": self.server.keyring},
+                daemon=True,
+            ).start()
 
         except Exception:
             logger.exception("DDNS UPDATE %s from %s: SERVFAIL", zone_name, peer)

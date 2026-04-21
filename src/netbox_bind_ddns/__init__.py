@@ -24,5 +24,13 @@ class BindDDNSConfig(PluginConfig):
 
         from . import signals  # noqa: F401  (register signal receivers)
 
+        # Clean up legacy webhook/event-rule objects from pre-signal versions
+        try:
+            from extras.models import EventRule, Webhook
+            EventRule.objects.filter(name="netbox_bind_ddns record change").delete()
+            Webhook.objects.filter(name="netbox_bind_ddns record NOTIFY").delete()
+        except Exception:
+            pass
+
 
 config = BindDDNSConfig
