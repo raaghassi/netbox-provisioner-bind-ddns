@@ -302,6 +302,11 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
 
         Falls back to full AXFR-style response if changelog entries are unavailable.
         """
+        if query.keyname not in self.server.keyring:
+            logger.error(f"IXFR aborted: keyname {query.keyname} not in keyring")
+            self._deny_request(query)
+            return
+
         # Extract client serial from authority section (RFC 1995 §3)
         client_serial = None
         for rrset in query.authority:
