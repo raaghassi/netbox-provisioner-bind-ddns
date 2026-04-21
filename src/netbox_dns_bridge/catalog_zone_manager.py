@@ -106,7 +106,7 @@ def create_zone(name, view_name) -> dns.zone.Zone:
         if _PREVIOUS_LAST_ZONE_UPDATE != last_zone_update:
             if latest_zone is not None:
                 logger.debug(
-                    f"Zone {latest_zone.name} was updated in view {latest_zone.view.name}"
+                    f"Zone {latest_zone.name} was updated in view {latest_zone.view.name if latest_zone.view else '(no view)'}"
                 )
             _PREVIOUS_LAST_ZONE_UPDATE = last_zone_update
             _increment_serial()
