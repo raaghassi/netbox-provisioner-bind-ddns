@@ -22,7 +22,7 @@ These include zone transfers (RFC 5936), catalog zones (RFC 9432), and dynamic u
 
 ![Architecture Overview](docs/architecture-overview.svg)
 
-DISCLAIMER: The dynamic update endpoint isn't here yet. Its planned - without a deadline.
+The dynamic update endpoint is available when the service is started with `--ddns-port`.
 
 ## Plugin configuration
 While providing Zone transfers via AXFR, the Server also exposes specialized catalog zones that BIND
@@ -41,20 +41,28 @@ To start the transfer endpoint service in the foreground:
 ```
 manage.py dns-transfer-endpoint --port 5354
 ```
+To enable the RFC 2136 dynamic update receiver as well:
+```
+manage.py dns-transfer-endpoint --port 5354 --ddns-port 53
+```
 This process needs to be scheduled as a background service for the built-in DNS Server to work
 correctly. For Linux users with Systemd (Ubuntu, etc), Matt Kollross provides a startup unit and
 instructions [here](docs/install-systemd-service.md).
 
 ### Service parameters
-Parameter | Description
---------- | -------------------------------------------------------------------
---port    | Port to listen on for requests (defaults to 5354)
---address | IP of interface to bind to (defaults to 0.0.0.0)
+Parameter   | Description
+----------- | -------------------------------------------------------------------
+--port      | Port to listen on for AXFR/IXFR requests (defaults to 5354)
+--address   | IP of interface to bind to (defaults to 0.0.0.0)
+--ddns-port | Port to listen on for DDNS UPDATE over UDP and TCP (defaults to disabled)
 
 ### Plugin settings
-Setting             | Description
---------------------| ---------------------------------------------------------
-tsig_keys           | Maps a TSIG Key to be used for each view.
+Setting                       | Description
+------------------------------| ---------------------------------------------------------
+tsig_keys                     | Maps a TSIG Key to be used for each view.
+ddns.allowed_zones            | Optional allowlist for RFC 2136 updates. Empty means any active zone in the mapped view.
+axfr.ixfr_enabled             | Enables native IXFR responses when changelog entries are available.
+axfr.ixfr_changelog_retention | Number of per-zone changelog entries to retain for IXFR generation.
 
 ## Plugin compatibility
 This plugin is an extension to the netbox-plugin-dns plugin. As such the versioning of this plugin
