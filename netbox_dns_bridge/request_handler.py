@@ -136,6 +136,12 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
     def _deny_request(self, query, rcode: dns.rcode.Rcode = dns.rcode.REFUSED) -> None:
         response = dns.message.make_response(query)
         response.set_rcode(rcode)
+        if query.had_tsig and query.keyname in self.server.keyring:
+            response.use_tsig(
+                self.server.keyring,
+                keyname=query.keyname,
+                original_id=query.id,
+            )
         wire = response.to_wire(multi=False)
         self._send_response(wire)
 
@@ -497,6 +503,11 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
             logger.warning(
                 f"Request denied from {peer}: {key_name} does not match a view"
             )
+            self._deny_request(query)
+            return
+
+        if qtype == dns.rdatatype.AXFR and isinstance(self, UDPRequestHandler):
+            logger.warning(f"Request denied from {peer}: AXFR requires TCP")
             self._deny_request(query)
             return
 
