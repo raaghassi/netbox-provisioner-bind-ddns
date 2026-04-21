@@ -144,7 +144,7 @@ def create_zone(name, view_name) -> dns.zone.Zone:
         ptr_name = dns.name.from_text(p_name, ptr_base)
         if not ptr_name.is_subdomain(origin):
             raise ValueError(
-                "Catalog zone member identifier {ptr_name.to_text()} not a subdomain"
+                f"Catalog zone member identifier {ptr_name.to_text()} not a subdomain"
             )
         rdata = dns.rdata.from_text(
             dns.rdataclass.IN, dns.rdatatype.PTR, qname.to_text()
