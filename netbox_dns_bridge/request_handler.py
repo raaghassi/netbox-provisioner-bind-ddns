@@ -173,12 +173,10 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
                     self.server.keyring, keyname=query.keyname, original_id=query.id
                 )
             else:
+                # RFC 2845 §4.3: server doesn't hold the key, so it cannot
+                # sign.  Send REFUSED without TSIG — consistent with
+                # _deny_request_bad_tsig() which also skips TSIG for BADKEY.
                 response.set_rcode(dns.rcode.REFUSED)
-                response.use_tsig(
-                    {},
-                    keyname=query.keyname,
-                    tsig_error=dns.rcode.BADKEY,
-                )
 
         data = response.to_wire(max_size=512)
         self._send_response(data)
