@@ -3,15 +3,20 @@ requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "netbox-bind-ddns"
+name = "netbox-plugin-dns-bridge"
 dynamic = ["version"]
-description = "BIND provisioner with RFC 2136 DDNS support for NetBox DNS"
+description = "A bridge between netbox-plugin-dns and your DNS infrastructure with DDNS and IXFR support."
 requires-python = ">=3.10"
-dependencies = ["netbox-plugin-dns>=1.2.0", "dnspython>=2.8.0"]
-license = { text = "GPL-2.0" }
+dependencies = ["netbox-plugin-dns>=1.5.0", "dnspython>=2.8.0"]
+license = { text = "MIT" }
+authors = [{ name = "Sven Luethi", email = "dev@sven.luethi.co" }]
 
 [project.optional-dependencies]
 dev = ["django-stubs", "pyright"]
+
+[project.urls]
+Homepage = "https://github.com/Suraxius/netbox-plugin-dns-bridge"
+Issues = "https://github.com/Suraxius/netbox-plugin-dns-bridge/issues"
 
 [tool.setuptools]
 include-package-data = true
@@ -22,4 +27,4 @@ package-dir = { "" = "src" }
 where = ["src"]
 
 [tool.setuptools.dynamic]
-version = { attr = "netbox_bind_ddns.__version__" }
+version = { attr = "netbox_dns_bridge.__version__" }

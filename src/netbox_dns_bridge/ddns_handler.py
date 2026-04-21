@@ -31,7 +31,7 @@ from netbox_dns.models import Record, Zone
 from . import notify
 from .notify_dispatcher import suppress_notify
 
-logger = logging.getLogger("netbox_bind_ddns.ddns")
+logger = logging.getLogger("netbox_dns_bridge.ddns")
 
 
 def _netbox_event_context():
@@ -49,6 +49,12 @@ def _netbox_event_context():
 
     User = get_user_model()
     user = User.objects.filter(is_superuser=True).first()
+    if user is None:
+        user = User.objects.filter(is_staff=True).first()
+    if user is None:
+        raise RuntimeError(
+            "netbox_dns_bridge: DDNS requires at least one superuser or staff user"
+        )
     request = NetBoxFakeRequest({
         "META": {},
         "POST": {},
@@ -89,6 +95,7 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
     # ------------------------------------------------------------------
 
     def _handle_update(self, wire):
+        close_old_connections()
         peer = self.client_address[0]
 
         # ---- Parse with TSIG validation ----
@@ -177,7 +184,6 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
         # ---- Process within a transaction ----
         # Suppress signal-based NOTIFY (we send it explicitly after commit).
         # Keep _netbox_event_context so other user-defined EventRules still fire.
-        close_old_connections()
         try:
             with suppress_notify():
                 with _netbox_event_context():
@@ -198,7 +204,14 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
             # Send NOTIFY directly (no debounce — one UPDATE = one NOTIFY)
             threading.Thread(
                 target=notify.notify_zone,
-                kwargs={"zone_name": zone_name, "tsig_keyring": self.server.keyring},
+                kwargs={
+                    "zone_name": zone_name,
+                    "tsig_keyring": self.server.keyring,
+                    "tsig_view_map": {
+                        v.name: dns.name.from_text(k)
+                        for k, v in self.server.tsig_view_map.items()
+                    },
+                },
                 daemon=True,
             ).start()
 
@@ -395,8 +408,14 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
         logger.debug("DDNS ADD %s %s %s ttl=%s zone=%s", name, rdtype, value, ttl, zone.name)
 
     def _delete_records_by_name(self, zone, name):
-        """Delete all non-SOA/NS records with the given name."""
-        records = Record.objects.filter(zone=zone, name=name).exclude(type__in=["SOA", "NS"])
+        """Delete all records with the given name.
+
+        Apex SOA/NS protection is handled by _process_updates (line 313),
+        which skips SOA/NS at '@' before calling any delete method.  This
+        method must not exclude NS at non-apex names — those are delegation
+        records and are deletable per RFC 2136 §3.4.2.4.
+        """
+        records = Record.objects.filter(zone=zone, name=name)
         count = 0
         for record in records:
             record.delete()
@@ -451,16 +470,26 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
         self._send_response(response.to_wire())
 
     def _deny_bad_tsig(self, wire, tsig_error):
-        """Send REFUSED for messages with bad/unknown TSIG."""
+        """Send REFUSED with TSIG error RR per RFC 2845 §4.3.
+
+        Only attaches a TSIG error RR when we hold the key (BADSIG).
+        For BADKEY/BADTIME the server cannot sign, so send REFUSED without TSIG.
+        """
         try:
             query = dns.message.from_wire(
                 wire, keyring={}, ignore_trailing=True, continue_on_error=True
             )
             response = dns.message.make_response(query)
             response.set_rcode(dns.rcode.REFUSED)
-            self._send_response(response.to_wire())
+            if query.had_tsig and query.keyname in self.server.keyring:
+                response.use_tsig(
+                    self.server.keyring,
+                    keyname=query.keyname,
+                    tsig_error=tsig_error,
+                )
+            self._send_response(response.to_wire(multi=False))
         except Exception:
-            pass
+            logger.debug("Failed to send TSIG error response")
 
 # ------------------------------------------------------------------
 # Transport subclasses
@@ -490,10 +519,17 @@ class DDNSTCPHandler(DDNSBaseHandler):
         sock.settimeout(10.0)
         try:
             while True:
-                length_bytes = sock.recv(2)
-                if len(length_bytes) < 2:
-                    break
-                length = int.from_bytes(length_bytes, byteorder="big")
+                length_data = sock.recv(2)
+                if not length_data:
+                    return
+                if len(length_data) < 2:
+                    while len(length_data) < 2:
+                        chunk = sock.recv(2 - len(length_data))
+                        if not chunk:
+                            return
+                        length_data += chunk
+
+                length = int.from_bytes(length_data, byteorder="big")
                 wire = b""
                 while len(wire) < length:
                     chunk = sock.recv(length - len(wire))

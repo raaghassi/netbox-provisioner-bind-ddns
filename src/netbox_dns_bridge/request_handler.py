@@ -26,10 +26,11 @@ import dns.zone
 from django.db import close_old_connections
 from netbox_dns.models import Zone, Record
 from netbox_dns.choices import ZoneStatusChoices, RecordStatusChoices
-from netbox_bind_ddns.models import ZoneChangelog, SeenTransferClient
+from netbox_dns_bridge.models import ZoneChangelog, SeenTransferClient
+from .utils import format_txt_value
 from . import catalog_zone_manager as catzm
 
-logger = logging.getLogger("netbox_bind_ddns.transfer")
+logger = logging.getLogger("netbox_dns_bridge.transfer")
 
 
 class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
@@ -51,7 +52,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
         except Zone.DoesNotExist:
             return None
 
-        zone = dns.zone.Zone(zone_name)
+        zone = dns.zone.Zone(zone_name, dns.name.root)
         zone.rdclass = dns.rdataclass.IN
 
         nb_records = Record.objects.filter(
@@ -73,17 +74,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
 
             value = record.value
             if rdtype == dns.rdatatype.TXT:
-                if value.startswith('"') and value.endswith('"'):
-                    value = value[1:-1].replace('" "', "").replace('"', '')
-
-                if len(value) > 255:
-                    chunks = [
-                        '"{}"'.format(value[i : i + 255])
-                        for i in range(0, len(value), 255)
-                    ]
-                    value = " ".join(chunks)
-                else:
-                    value = f'"{value}"'
+                value = format_txt_value(value)
 
             rdata = dns.rdata.from_text(
                 dns.rdataclass.IN,
@@ -116,21 +107,28 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
                 zone.replace_rdataset(name, rdataset)
         return zone
 
-    def _denyRequestBadTSIG(self, wire, tsig_error: dns.rcode.Rcode) -> None:
-        query = dns.message.from_wire(
-            wire, keyring={}, ignore_trailing=True, continue_on_error=True
-        )
-
-        response = dns.message.make_response(query)
-        response.set_rcode(dns.rcode.REFUSED)
-
-        if query.had_tsig:
-            response.use_tsig(
-                keyring={},
-                keyname=query.keyname,
-                tsig_error=tsig_error,
+    def _deny_request_bad_tsig(self, wire, tsig_error: dns.rcode.Rcode) -> None:
+        try:
+            query = dns.message.from_wire(
+                wire, keyring={}, ignore_trailing=True, continue_on_error=True
             )
-        self._deny_request(query)
+
+            response = dns.message.make_response(query)
+            response.set_rcode(dns.rcode.REFUSED)
+
+            # Only attach a TSIG error RR when we hold the key (BADSIG).
+            # For BADKEY/BADTIME the server cannot sign, so send REFUSED
+            # without TSIG per RFC 2845 §4.3.
+            if query.had_tsig and query.keyname in self.server.keyring:
+                response.use_tsig(
+                    self.server.keyring,
+                    keyname=query.keyname,
+                    tsig_error=tsig_error,
+                )
+
+            self._send_response(response.to_wire(multi=False))
+        except Exception:
+            logger.debug("Failed to send TSIG error response")
 
     def _send_response(self, data) -> None:
         raise NotImplementedError
@@ -184,9 +182,14 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
 
         data = response.to_wire(max_size=512)
         self._send_response(data)
-        logger.debug(f"{peer} SOA {nb_view.name}/{dname}")
+        logger.info(f"{peer} SOA {nb_view.name}/{dname}")
 
     def _handle_axfr_request(self, query, zone, peer, nb_view, dname) -> None:
+        if query.keyname not in self.server.keyring:
+            logger.error(f"AXFR aborted: keyname {query.keyname} not in keyring")
+            self._deny_request(query)
+            return
+
         rrsets = []
         soa_rrset = None
         for name, rdataset in zone.iterate_rdatasets():
@@ -234,7 +237,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
                     request_mac=r.mac if tsig_ctx else query.mac,
                 )
                 wire = r.get_wire()
-                self.request.sendall(len(wire).to_bytes(2, "big") + wire)
+                self._send_response(wire)
 
                 r = dns.renderer.Renderer(
                     id=query.id,
@@ -247,7 +250,14 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
                     query.question[0].rdtype,
                     query.question[0].rdclass,
                 )
-                r.add_rrset(dns.renderer.ANSWER, rrset)
+                try:
+                    r.add_rrset(dns.renderer.ANSWER, rrset)
+                except dns.exception.TooBig:
+                    logger.error(
+                        f"RRset {rrset.name}/{dns.rdatatype.to_text(rrset.rdtype)} "
+                        f"exceeds MAX_WIRE ({self.MAX_WIRE}) and cannot be sent; "
+                        f"skipping."
+                    )
 
         r.write_header()
         tsig_ctx = r.add_multi_tsig(
@@ -265,7 +275,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
         self._send_response(wire)
 
         self._record_transfer_client(peer, dname, nb_view)
-        logger.debug(f"{peer} AXFR {nb_view.name}/{dname}")
+        logger.info(f"{peer} AXFR {nb_view.name}/{dname}")
 
     def _build_soa_rdata_with_serial(self, soa_rrset, serial, zone_origin):
         """Build an SOA rdata with a substituted serial number (Option B from plan)."""
@@ -428,6 +438,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
         )
 
     def _handle_dns_query(self, wire) -> None:
+        close_old_connections()
         peer = self.client_address[0]
         try:
             query = dns.message.from_wire(
@@ -441,12 +452,12 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
             logger.warning(
                 f"Request denied from {peer} failed TSIG verification: {e}"
             )
-            self._denyRequestBadTSIG(wire, dns.rcode.BADSIG)
+            self._deny_request_bad_tsig(wire, dns.rcode.BADSIG)
             return
 
         except (dns.message.UnknownTSIGKey, dns.tsig.BadAlgorithm) as e:
             logger.warning(f"Request denied from {peer} with bad TSIG key: {e}")
-            self._denyRequestBadTSIG(wire, dns.rcode.BADKEY)
+            self._deny_request_bad_tsig(wire, dns.rcode.BADKEY)
             return
 
         except Exception:
@@ -462,9 +473,9 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
         qtype = question.rdtype
         dname = qname.to_text().rstrip(".")
 
-        ixfr_as_axfr = getattr(self.server, "ixfr_as_axfr", False)
+        ixfr_enabled = getattr(self.server, "ixfr_enabled", False)
         accepted_types = (dns.rdatatype.AXFR, dns.rdatatype.SOA)
-        if ixfr_as_axfr:
+        if ixfr_enabled:
             accepted_types = (dns.rdatatype.AXFR, dns.rdatatype.IXFR, dns.rdatatype.SOA)
 
         if qtype not in accepted_types:
@@ -507,7 +518,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
             self._handle_soa_request(query, soa_rrset, zone, peer, nb_view, dname)
         elif qtype == dns.rdatatype.AXFR:
             self._handle_axfr_request(query, zone, peer, nb_view, dname)
-        elif qtype == dns.rdatatype.IXFR and ixfr_as_axfr:
+        elif qtype == dns.rdatatype.IXFR and ixfr_enabled:
             # _handle_ixfr_request will fall back to AXFR if no changelog exists
             self._handle_ixfr_request(query, zone, soa_rrset, peer, nb_view, dname)
 

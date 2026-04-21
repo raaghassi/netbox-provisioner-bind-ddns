@@ -5,9 +5,9 @@ from django.db.models.signals import pre_save, post_save
 from django.dispatch import receiver
 from netbox_dns.models import Zone
 
-from ..service.endpoint import catalog_zone_manager as catzm
+from .. import catalog_zone_manager as catzm
 
-logger = logging.getLogger("netbox_bind_ddns.signals.catalog")
+logger = logging.getLogger("netbox_dns_bridge.signals.catalog")
 
 
 @receiver(pre_save, sender=Zone)

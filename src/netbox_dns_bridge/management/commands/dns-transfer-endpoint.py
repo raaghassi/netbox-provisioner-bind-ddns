@@ -9,30 +9,30 @@ from django.core.management.base import BaseCommand
 from django.conf import settings
 from django.db import close_old_connections
 from netbox_dns.models import View
-from netbox_bind_ddns.service.endpoint.request_handler import UDPRequestHandler, TCPRequestHandler
-from netbox_bind_ddns.service.endpoint.dns_server import (
+from netbox_dns_bridge.request_handler import UDPRequestHandler, TCPRequestHandler
+from netbox_dns_bridge.dns_server import (
     UDPDNSServer, TCPDNSServer,
     ThreadingUDPDNSServer, ThreadingTCPDNSServer,
 )
-from netbox_bind_ddns.service.endpoint.ddns_handler import DDNSUDPHandler, DDNSTCPHandler
-from netbox_bind_ddns.service.endpoint import catalog_zone_manager as catzm
+from netbox_dns_bridge.ddns_handler import DDNSUDPHandler, DDNSTCPHandler
+from netbox_dns_bridge import catalog_zone_manager as catzm
 
-logger = logging.getLogger("netbox_bind_ddns")
+logger = logging.getLogger("netbox_dns_bridge")
 
 
 class Command(BaseCommand):
     help = "Run AXFR DNS transfer endpoint and optional DDNS receiver using NetBox DNS data"
 
     def load_settings(self):
-        self.settings = settings.PLUGINS_CONFIG.get("netbox_bind_ddns", None)
+        self.settings = settings.PLUGINS_CONFIG.get("netbox_dns_bridge", None)
         if not self.settings:
             raise RuntimeError(
-                "netbox_bind_ddns: Plugin failed to initialize due to missing settings."
+                "netbox_dns_bridge: Plugin failed to initialize due to missing settings."
             )
 
         self.tsig_keys = self.settings.get("tsig_keys", None)
         if not self.tsig_keys:
-            raise RuntimeError("netbox_bind_ddns: tsig_keys not set in plugin settings.")
+            raise RuntimeError("netbox_dns_bridge: tsig_keys not set in plugin settings.")
 
     def load_tsig_key_settings(self):
         self.keyring = {}
@@ -69,7 +69,7 @@ class Command(BaseCommand):
             logger.debug("Loaded TSIG key: %s view: %s", key_name_str, nb_view.name)
 
         if not self.keyring:
-            msg = "netbox_bind_ddns: No valid TSIG keys loaded."
+            msg = "netbox_dns_bridge: No valid TSIG keys loaded."
             logger.critical(msg)
             raise RuntimeError(msg)
 
@@ -87,7 +87,7 @@ class Command(BaseCommand):
 
     def _prune_changelog(self, retention):
         """Periodically prune ZoneChangelog entries beyond retention limit per zone."""
-        from netbox_bind_ddns.models import ZoneChangelog
+        from netbox_dns_bridge.models import ZoneChangelog
 
         while True:
             time.sleep(300)  # Run every 5 minutes
@@ -137,15 +137,17 @@ class Command(BaseCommand):
         logger.info("IXFR changelog pruning active (retention=%d per zone)", retention)
 
         # ---- AXFR servers ----
-        ixfr_as_axfr = axfr_config.get("ixfr_as_axfr", False)
+        ixfr_enabled = axfr_config.get(
+            "ixfr_enabled", axfr_config.get("ixfr_as_axfr", False)
+        )
 
         udp_server = UDPDNSServer(
             (address, port), UDPRequestHandler, self.keyring, self.tsig_view_map,
-            ixfr_as_axfr=ixfr_as_axfr,
+            ixfr_enabled=ixfr_enabled,
         )
         tcp_server = TCPDNSServer(
             (address, port), TCPRequestHandler, self.keyring, self.tsig_view_map,
-            ixfr_as_axfr=ixfr_as_axfr,
+            ixfr_enabled=ixfr_enabled,
         )
 
         udp_thread = threading.Thread(

@@ -15,11 +15,11 @@ import dns.tsigkeyring
 import dns.zone
 from netbox_dns.models import Zone
 from netbox_dns.choices import ZoneStatusChoices
-from netbox_bind_ddns.models import IntegerKeyValueSetting, CatalogZoneMemberIdentifier
+from netbox_dns_bridge.models import IntegerKeyValueSetting, CatalogZoneMemberIdentifier
 from uuid import uuid4
 from base64 import b32encode
 
-logger = logging.getLogger("netbox_bind_ddns.catz")
+logger = logging.getLogger("netbox_dns_bridge.catz")
 
 _LOCK = threading.Lock()
 _SERIAL_MAX = 0xFFFFFFFF
@@ -69,27 +69,27 @@ def _increment_serial() -> None:
 
 
 def _create_missing_member_identifiers() -> None:
-   existing_zone_ids = CatalogZoneMemberIdentifier.objects.values_list(
-       "zone_id", flat=True
-   )
+    existing_zone_ids = CatalogZoneMemberIdentifier.objects.values_list(
+        "zone_id", flat=True
+    )
 
-   missing_zones = Zone.objects.exclude(id__in=existing_zone_ids)
+    missing_zones = Zone.objects.exclude(id__in=existing_zone_ids)
 
-   new_objects = [
-       CatalogZoneMemberIdentifier(
-           zone=zone,
-           name=_generate_member_identifier(),
-       )
-       for zone in missing_zones
-   ]
+    new_objects = [
+        CatalogZoneMemberIdentifier(
+            zone=zone,
+            name=_generate_member_identifier(),
+        )
+        for zone in missing_zones
+    ]
 
-   for identifier in new_objects:
-       logger.debug(f"Zone {identifier.zone} has no catz member identifier. Creating...")
+    for identifier in new_objects:
+        logger.debug(f"Zone {identifier.zone} has no catz member identifier. Creating...")
 
-   CatalogZoneMemberIdentifier.objects.bulk_create(
-       new_objects,
-       ignore_conflicts=False,
-   )
+    CatalogZoneMemberIdentifier.objects.bulk_create(
+        new_objects,
+        ignore_conflicts=False,
+    )
 
 
 def create_zone(name, view_name) -> dns.zone.Zone:

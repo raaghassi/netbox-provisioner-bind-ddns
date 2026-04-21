@@ -1,5 +1,5 @@
 """
-Squashed initial migration for netbox_bind_ddns.
+Squashed initial migration for netbox_dns_bridge.
 
 Creates the final state of both models (IntegerKeyValueSetting and
 CatalogZoneMemberIdentifier) as they exist after upstream's 5 migrations.

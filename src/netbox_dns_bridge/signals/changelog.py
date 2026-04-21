@@ -7,7 +7,7 @@ from netbox_dns.models import Zone, Record
 
 from ..models import ZoneChangelog
 
-logger = logging.getLogger("netbox_bind_ddns.signals.changelog")
+logger = logging.getLogger("netbox_dns_bridge.signals.changelog")
 
 
 @receiver(pre_save, sender=Record)
@@ -31,15 +31,19 @@ def record_pre_save(sender, instance, **kwargs):
 
 @receiver(post_save, sender=Record)
 def record_post_save(sender, instance, created, **kwargs):
-    """Write IXFR changelog entries for incremental zone transfers."""
+    """Write IXFR changelog entries for incremental zone transfers.
+
+    Entries are written with serial=0 (sentinel) because netbox_dns increments
+    the zone SOA serial *after* post_save fires.  The zone_post_save_backfill_serial
+    handler fills in the real serial once update_serial() saves.
+    """
     try:
-        new_serial = instance.zone.soa_serial
         ttl = instance.ttl or instance.zone.default_ttl
 
         if created:
             ZoneChangelog.objects.create(
                 zone=instance.zone,
-                serial=new_serial,
+                serial=0,
                 action="ADD",
                 name=instance.name,
                 rdtype=instance.type,
@@ -57,19 +61,9 @@ def record_post_save(sender, instance, created, **kwargs):
                     or old["zone_id"] != instance.zone_id
                 )
                 if changed:
-                    if old["zone_id"] != instance.zone_id:
-                        try:
-                            delete_serial = Zone.objects.only("soa_serial").get(
-                                pk=old["zone_id"]
-                            ).soa_serial
-                        except Zone.DoesNotExist:
-                            delete_serial = new_serial
-                    else:
-                        delete_serial = new_serial
-
                     ZoneChangelog.objects.create(
                         zone_id=old["zone_id"],
-                        serial=delete_serial,
+                        serial=0,
                         action="DELETE",
                         name=old["name"],
                         rdtype=old["type"],
@@ -78,7 +72,7 @@ def record_post_save(sender, instance, created, **kwargs):
                     )
                     ZoneChangelog.objects.create(
                         zone=instance.zone,
-                        serial=new_serial,
+                        serial=0,
                         action="ADD",
                         name=instance.name,
                         rdtype=instance.type,
@@ -91,13 +85,12 @@ def record_post_save(sender, instance, created, **kwargs):
 
 @receiver(post_delete, sender=Record)
 def record_post_delete(sender, instance, **kwargs):
-    """Write IXFR changelog DELETE entry."""
+    """Write IXFR changelog DELETE entry (serial=0 sentinel, backfilled by zone handler)."""
     try:
-        serial = instance.zone.soa_serial
         ttl = instance.ttl or instance.zone.default_ttl
         ZoneChangelog.objects.create(
             zone=instance.zone,
-            serial=serial,
+            serial=0,
             action="DELETE",
             name=instance.name,
             rdtype=instance.type,
@@ -106,3 +99,29 @@ def record_post_delete(sender, instance, **kwargs):
         )
     except Exception:
         logger.exception("Failed to write IXFR changelog entry (post_delete)")
+
+
+@receiver(post_save, sender=Zone)
+def zone_post_save_backfill_serial(sender, instance, **kwargs):
+    """Backfill sentinel serial (0) in changelog entries with the real soa_serial.
+
+    netbox_dns calls zone.update_serial() after Record.save(), which triggers
+    Zone post_save with update_fields containing 'soa_serial'.  At that point
+    instance.soa_serial holds the new value and we can update any pending
+    changelog entries that were written with serial=0.
+    """
+    update_fields = kwargs.get("update_fields")
+    if not update_fields or "soa_serial" not in update_fields:
+        return
+
+    try:
+        updated = ZoneChangelog.objects.filter(
+            zone=instance, serial=0
+        ).update(serial=instance.soa_serial)
+        if updated:
+            logger.debug(
+                "Backfilled %d changelog entries to serial %d for zone %s",
+                updated, instance.soa_serial, instance.name,
+            )
+    except Exception:
+        logger.exception("Failed to backfill changelog serials for zone %s", instance.name)

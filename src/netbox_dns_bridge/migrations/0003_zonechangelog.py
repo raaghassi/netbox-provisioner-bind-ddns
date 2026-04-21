@@ -6,12 +6,12 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ("netbox_dns", "0030_dnsseckeytemplate_comments_dnsseckeytemplate_owner_and_more"),
-        ("netbox_bind_ddns", "0003_zonechangelog"),
+        ("netbox_dns_bridge", "0002_migrate_from_upstream"),
     ]
 
     operations = [
         migrations.CreateModel(
-            name="SeenTransferClient",
+            name="ZoneChangelog",
             fields=[
                 (
                     "id",
@@ -21,29 +21,28 @@ class Migration(migrations.Migration):
                         serialize=False,
                     ),
                 ),
-                ("address", models.GenericIPAddressField()),
-                ("last_transfer", models.DateTimeField(auto_now=True)),
+                ("serial", models.BigIntegerField(db_index=True)),
+                ("action", models.CharField(max_length=10)),
+                ("name", models.CharField(max_length=255)),
+                ("rdtype", models.CharField(max_length=10)),
+                ("value", models.TextField()),
+                ("ttl", models.PositiveIntegerField()),
                 (
                     "zone",
                     models.ForeignKey(
                         on_delete=django.db.models.deletion.CASCADE,
-                        related_name="transfer_clients",
                         to="netbox_dns.zone",
-                    ),
-                ),
-                (
-                    "view",
-                    models.ForeignKey(
-                        blank=True,
-                        null=True,
-                        on_delete=django.db.models.deletion.SET_NULL,
-                        to="netbox_dns.view",
                     ),
                 ),
             ],
             options={
-                "ordering": ["zone", "address"],
-                "unique_together": {("address", "zone", "view")},
+                "ordering": ["serial", "id"],
+                "indexes": [
+                    models.Index(
+                        fields=["zone", "serial"],
+                        name="netbox_dns_bridge_zone_serial_idx",
+                    ),
+                ],
             },
         ),
     ]

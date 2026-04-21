@@ -5,9 +5,9 @@ from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from netbox_dns.models import Zone, Record
 
-from ..service.endpoint.notify_dispatcher import schedule_notify
+from ..notify_dispatcher import schedule_notify
 
-logger = logging.getLogger("netbox_bind_ddns.signals.notify")
+logger = logging.getLogger("netbox_dns_bridge.signals.notify")
 
 
 @receiver(post_save, sender=Record)

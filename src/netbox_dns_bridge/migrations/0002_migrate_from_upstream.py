@@ -15,7 +15,7 @@ def migrate_upstream_data(apps, schema_editor):
         all_tables = connection.introspection.table_names(cursor)
 
         old_kvs = "netbox_plugin_bind_provisioner_integerkeyvaluesetting"
-        new_kvs = "netbox_bind_ddns_integerkeyvaluesetting"
+        new_kvs = "netbox_dns_bridge_integerkeyvaluesetting"
         if old_kvs in all_tables and new_kvs in all_tables:
             cursor.execute(
                 f'INSERT INTO "{new_kvs}" ("key", "value") '
@@ -27,7 +27,7 @@ def migrate_upstream_data(apps, schema_editor):
                 print(f"  Migrated {count} IntegerKeyValueSetting rows from upstream")
 
         old_catz = "netbox_plugin_bind_provisioner_catalogzonememberidentifier"
-        new_catz = "netbox_bind_ddns_catalogzonememberidentifier"
+        new_catz = "netbox_dns_bridge_catalogzonememberidentifier"
         if old_catz in all_tables and new_catz in all_tables:
             cursor.execute(
                 f'INSERT INTO "{new_catz}" ("name", "zone_id") '
@@ -42,7 +42,7 @@ def migrate_upstream_data(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("netbox_bind_ddns", "0001_initial"),
+        ("netbox_dns_bridge", "0001_initial"),
     ]
 
     operations = [

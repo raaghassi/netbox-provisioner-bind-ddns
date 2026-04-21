@@ -3,7 +3,7 @@ import socketserver
 import socket
 from typing import Tuple
 
-logger = logging.getLogger("netbox_bind_ddns.server")
+logger = logging.getLogger("netbox_dns_bridge.server")
 
 
 class DNSAddressMixin:
@@ -27,43 +27,45 @@ class DNSAddressMixin:
         return (sockaddr[0], sockaddr[1])  # type: ignore[index]
 
 
-class TCPDNSServer(DNSAddressMixin, socketserver.TCPServer):
+class TCPDNSServer(DNSAddressMixin, socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
+    daemon_threads = True
 
     def __init__(self, server_address, handler_class, keyring, tsig_view_map,
-                 ixfr_as_axfr=False):
+                 ixfr_enabled=False):
         sockaddr = self._resolve_address(
             server_address,
             socket.SOCK_STREAM,
             socket.IPPROTO_TCP
         )
 
-        super().__init__(sockaddr, handler_class)
+        socketserver.TCPServer.__init__(self, sockaddr, handler_class)
 
         self.keyring = keyring
         self.tsig_view_map = tsig_view_map
-        self.ixfr_as_axfr = ixfr_as_axfr
+        self.ixfr_enabled = ixfr_enabled
 
 
-class UDPDNSServer(DNSAddressMixin, socketserver.UDPServer):
+class UDPDNSServer(DNSAddressMixin, socketserver.ThreadingMixIn, socketserver.UDPServer):
     allow_reuse_address = True
+    daemon_threads = True
 
     def __init__(self, server_address, handler_class, keyring, tsig_view_map,
-                 ixfr_as_axfr=False):
+                 ixfr_enabled=False):
         sockaddr = self._resolve_address(
             server_address,
             socket.SOCK_DGRAM,
             socket.IPPROTO_UDP
         )
 
-        super().__init__(sockaddr, handler_class)
+        socketserver.UDPServer.__init__(self, sockaddr, handler_class)
 
         self.keyring = keyring
         self.tsig_view_map = tsig_view_map
-        self.ixfr_as_axfr = ixfr_as_axfr
+        self.ixfr_enabled = ixfr_enabled
 
 
-# Threaded variants for DDNS handlers (DB writes during request processing)
+# Threaded variants for DDNS handlers (separate allowed_zones / ddns_tag config)
 class ThreadingTCPDNSServer(DNSAddressMixin, socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
     daemon_threads = True

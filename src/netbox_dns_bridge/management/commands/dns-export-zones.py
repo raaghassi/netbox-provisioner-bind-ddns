@@ -1,6 +1,6 @@
 import os
 import netbox_dns.models
-from netbox_bind_ddns.utils import export_bind_zone_file
+from netbox_dns_bridge.utils import export_bind_zone_file
 from django.core.management.base import BaseCommand, CommandError
 
 
@@ -25,6 +25,11 @@ class Command(BaseCommand):
             return
 
         for zone in nb_zones:
+            if zone.view is None:
+                self.stderr.write(
+                    self.style.WARNING(f"Skipping zone '{zone.name}': no view assigned")
+                )
+                continue
             view_name = zone.view.name
             view_dir = os.path.join(base_path, view_name)
             os.makedirs(view_dir, exist_ok=True)
