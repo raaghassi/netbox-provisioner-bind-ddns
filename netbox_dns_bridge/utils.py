@@ -6,6 +6,25 @@ import dns.exception
 import netbox_dns.models
 
 
+def format_txt_value(value: str) -> str:
+    """Format a TXT record value for dnspython, chunking per RFC 1035 §3.3.14.
+
+    NetBox stores TXT values as bare strings or already-quoted strings.
+    dnspython requires each character-string to be <=255 chars and quoted.
+    """
+    # Strip existing quoting that NetBox may have added
+    if value.startswith('"') and value.endswith('"'):
+        value = value[1:-1].replace('" "', "").replace('"', '')
+
+    if len(value) > 255:
+        chunks = [
+            '"{}"'.format(value[i : i + 255])
+            for i in range(0, len(value), 255)
+        ]
+        return " ".join(chunks)
+    return f'"{value}"'
+
+
 def export_bind_zone_file(nb_zone: netbox_dns.models.Zone, file_path: str):
 
     # Create dnspython zone object
@@ -16,8 +35,12 @@ def export_bind_zone_file(nb_zone: netbox_dns.models.Zone, file_path: str):
         rdclass = dns.rdataclass.IN
         rdatatype = dns.rdatatype.from_text(record.type)
 
+        value = record.value
+        if rdatatype == dns.rdatatype.TXT:
+            value = format_txt_value(value)
+
         # Create rdata object
-        rdata = dns.rdata.from_text(rdclass, rdatatype, record.value)
+        rdata = dns.rdata.from_text(rdclass, rdatatype, value)
 
         # Create rdataset
         rdataset = dns.rdataset.Rdataset(rdclass, rdatatype)

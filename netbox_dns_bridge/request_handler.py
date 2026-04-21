@@ -15,6 +15,7 @@ from .logger import get_logger
 from netbox_dns.models import Zone, Record
 from netbox_dns.choices import ZoneStatusChoices, RecordStatusChoices
 from netbox_dns_bridge import catalog_zone_manager as catzm
+from .utils import format_txt_value
 
 logger = get_logger(__name__)
 
@@ -59,24 +60,9 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
             # If the record has no TTL, use the zone default
             ttl = record.ttl or nb_zone.default_ttl
 
-            # Apply quoting for TXT records to stop tokanizer
-            # from cutting it up:
             value = record.value
             if rdtype == dns.rdatatype.TXT:
-                if value.startswith('"') and value.endswith('"'):
-                    value = value[1:-1].replace('" "', "").replace('"', '"')
-
-                if len(value) > 255:
-                    # This is a bug fix for netbox. If netbox allowed for
-                    # an unquoted value to be larger then 255 characters,
-                    # it misunderstood everything behind a ; as a comment.
-                    chunks = [
-                        '"{}"'.format(value[i : i + 255])
-                        for i in range(0, len(value), 255)
-                    ]
-                    value = " ".join(chunks)
-                else:
-                    value = f'"{value}"'
+                value = format_txt_value(value)
 
             rdata = dns.rdata.from_text(
                 dns.rdataclass.IN,
