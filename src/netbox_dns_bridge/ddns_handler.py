@@ -108,15 +108,15 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
             )
         except dns.tsig.BadSignature:
             logger.warning("DDNS REFUSED from %s: bad TSIG signature", peer)
-            self._deny_bad_tsig(wire, dns.tsig.BADSIG)  # type: ignore[attr-defined]
+            self._deny_bad_tsig(wire, dns.rcode.BADSIG)
             return
         except dns.message.UnknownTSIGKey:
             logger.warning("DDNS REFUSED from %s: unknown TSIG key", peer)
-            self._deny_bad_tsig(wire, dns.tsig.BADKEY)  # type: ignore[attr-defined]
+            self._deny_bad_tsig(wire, dns.rcode.BADKEY)
             return
         except dns.tsig.BadAlgorithm:
             logger.warning("DDNS REFUSED from %s: bad TSIG algorithm", peer)
-            self._deny_bad_tsig(wire, dns.tsig.BADKEY)  # type: ignore[attr-defined]
+            self._deny_bad_tsig(wire, dns.rcode.BADKEY)
             return
         except Exception:
             logger.exception("DDNS: failed to parse message from %s", peer)
