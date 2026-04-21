@@ -1,5 +1,4 @@
 from django.db import models
-import netbox.models
 import netbox_dns.models
 
 
