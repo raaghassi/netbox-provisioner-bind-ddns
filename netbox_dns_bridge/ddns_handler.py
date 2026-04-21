@@ -335,6 +335,10 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
         for rrset in message.authority:
             rel_name = self._relative_name(rrset.name.to_text().rstrip("."), nb_zone.name)
             rdtype_text = dns.rdatatype.to_text(rrset.rdtype)
+            logger.debug(
+                "DDNS rrset: name=%s rel=%s rdclass=%d rdtype=%s ttl=%d rdata_count=%d",
+                rrset.name, rel_name, rrset.rdclass, rdtype_text, rrset.ttl, len(rrset),
+            )
 
             # Section 3.4.2.4: Never touch SOA or NS at the zone apex
             if rel_name == "@" and rrset.rdtype in (dns.rdatatype.SOA, dns.rdatatype.NS):
@@ -449,33 +453,30 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
         method must not exclude NS at non-apex names — those are delegation
         records and are deletable per RFC 2136 §3.4.2.4.
         """
-        records = Record.objects.filter(zone=zone, name=name)
+        records = list(Record.objects.filter(zone=zone, name=name))
         count = 0
         for record in records:
             record.delete()
             count += 1
-        if count:
-            logger.debug("DDNS DEL name=%s: %d records zone=%s", name, count, zone.name)
+        logger.debug("DDNS DEL name=%s: %d records zone=%s", name, count, zone.name)
 
     def _delete_records_by_name_type(self, zone, name, rdtype):
         """Delete all records with the given name and type."""
-        records = Record.objects.filter(zone=zone, name=name, type=rdtype)
+        records = list(Record.objects.filter(zone=zone, name=name, type=rdtype))
         count = 0
         for record in records:
             record.delete()
             count += 1
-        if count:
-            logger.debug("DDNS DEL name=%s type=%s: %d records zone=%s", name, rdtype, count, zone.name)
+        logger.debug("DDNS DEL name=%s type=%s: %d records zone=%s", name, rdtype, count, zone.name)
 
     def _delete_record(self, zone, name, rdtype, value):
         """Delete a specific record matching name+type+value."""
-        records = Record.objects.filter(zone=zone, name=name, type=rdtype, value=value)
+        records = list(Record.objects.filter(zone=zone, name=name, type=rdtype, value=value))
         count = 0
         for record in records:
             record.delete()
             count += 1
-        if count:
-            logger.debug("DDNS DEL name=%s type=%s value=%s zone=%s", name, rdtype, value, zone.name)
+        logger.debug("DDNS DEL name=%s type=%s value=%s: %d records zone=%s", name, rdtype, value, count, zone.name)
 
     # ------------------------------------------------------------------
     # Helpers
