@@ -8,14 +8,6 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AlterField(
-            model_name="zonechangelog",
-            name="action",
-            field=models.CharField(
-                choices=[("ADD", "Add"), ("DELETE", "Delete")],
-                max_length=10,
-            ),
-        ),
         migrations.AddConstraint(
             model_name="zonechangelog",
             constraint=models.CheckConstraint(
