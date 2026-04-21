@@ -19,7 +19,7 @@ class Command(BaseCommand):
 
         os.makedirs(base_path, exist_ok=True)
 
-        nb_zones = netbox_dns.models.Zone.objects.prefetch_related("view").all()
+        nb_zones = netbox_dns.models.Zone.objects.select_related("view").all()
         if not nb_zones.exists():
             self.stdout.write(self.style.WARNING("No zones found in NetBox DNS."))
             return
