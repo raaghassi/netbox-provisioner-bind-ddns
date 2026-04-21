@@ -222,7 +222,7 @@ def create_zone(name, view_name) -> dns.zone.Zone:
     return zone
 
 
-def _generate_member_identifier() -> None:
+def _generate_member_identifier() -> str:
     return b32encode(uuid4().bytes)[0:26].lower().decode("UTF-8")
 
 
