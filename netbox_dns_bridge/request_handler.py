@@ -310,7 +310,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
             return
 
         # Identify TSIG key used
-        if not query.had_tsig:
+        if not query.had_tsig or query.keyname is None:
             logger.warning(f"Request denied from {peer}: No TSIG key used")
             self._deny_request(query)
             return
