@@ -221,7 +221,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
                     request_mac=r.mac if tsig_ctx else query.mac,
                 )
                 wire = r.get_wire()
-                self.request.sendall(len(wire).to_bytes(2, "big") + wire)
+                self._send_response(wire)
 
                 # Start new renderer
                 r = dns.renderer.Renderer(
