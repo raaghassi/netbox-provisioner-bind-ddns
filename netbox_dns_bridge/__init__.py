@@ -1,10 +1,7 @@
-import logging
 from netbox.plugins import PluginConfig
 from django.conf import settings
 
 __version__ = "1.5.3"
-
-logger = logging.getLogger(__name__)
 
 
 class DNSBridgeConfig(PluginConfig):
