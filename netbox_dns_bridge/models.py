@@ -64,7 +64,7 @@ class ZoneChangelog(models.Model):
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(
-                    action__in=[Action.ADD, Action.DELETE],
+                    action__in=["ADD", "DELETE"],
                 ),
                 name="netbox_dns_bridge_zc_action_ck",
             ),
