@@ -102,23 +102,27 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
         return zone
 
     def _deny_request_bad_tsig(self, wire, tsig_error: dns.rcode) -> None:
-        # Use empty keyring to parse TSIG without validating
-        query = dns.message.from_wire(
-            wire, keyring={}, ignore_trailing=True, continue_on_error=True
-        )
-
-        # Make a response
-        response = dns.message.make_response(query)
-        response.set_rcode(dns.rcode.REFUSED)
-
-        if query.had_tsig:
-            # Add TSIG with error code, but do not sign (no MAC, empty keyring)
-            response.use_tsig(
-                keyring={},  # empty; we're not signing
-                keyname=query.keyname,
-                tsig_error=tsig_error,
+        try:
+            query = dns.message.from_wire(
+                wire, keyring={}, ignore_trailing=True, continue_on_error=True
             )
-        self._send_response(response.to_wire())
+
+            response = dns.message.make_response(query)
+            response.set_rcode(dns.rcode.REFUSED)
+
+            # Only attach a TSIG error RR when we hold the key (BADSIG).
+            # For BADKEY/BADTIME the server cannot sign, so send REFUSED
+            # without TSIG per RFC 2845 §4.3.
+            if query.had_tsig and query.keyname in self.server.keyring:
+                response.use_tsig(
+                    self.server.keyring,
+                    keyname=query.keyname,
+                    tsig_error=tsig_error,
+                )
+
+            self._send_response(response.to_wire(multi=False))
+        except Exception:
+            logger.debug("Failed to send TSIG error response")
 
     def _send_response(self, data) -> None:
         raise NotImplementedError
@@ -151,11 +155,9 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
                     self.server.keyring, keyname=query.keyname, original_id=query.id
                 )
             else:
-                # unknown key — use an empty keyring so use_tsig() does not
-                # raise KeyError trying to look up a key that isn't present.
                 response.set_rcode(dns.rcode.REFUSED)
                 response.use_tsig(
-                    {},  # empty keyring; no signing
+                    self.server.keyring,
                     keyname=query.keyname,
                     tsig_error=dns.rcode.BADKEY,
                 )
