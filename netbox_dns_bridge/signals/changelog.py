@@ -44,7 +44,7 @@ def record_post_save(sender, instance, created, **kwargs):
             ZoneChangelog.objects.create(
                 zone=instance.zone,
                 serial=0,
-                action="ADD",
+                action=ZoneChangelog.Action.ADD,
                 name=instance.name,
                 rdtype=instance.type,
                 value=instance.value,
@@ -64,7 +64,7 @@ def record_post_save(sender, instance, created, **kwargs):
                     ZoneChangelog.objects.create(
                         zone_id=old["zone_id"],
                         serial=0,
-                        action="DELETE",
+                        action=ZoneChangelog.Action.DELETE,
                         name=old["name"],
                         rdtype=old["type"],
                         value=old["value"],
@@ -73,7 +73,7 @@ def record_post_save(sender, instance, created, **kwargs):
                     ZoneChangelog.objects.create(
                         zone=instance.zone,
                         serial=0,
-                        action="ADD",
+                        action=ZoneChangelog.Action.ADD,
                         name=instance.name,
                         rdtype=instance.type,
                         value=instance.value,
@@ -91,7 +91,7 @@ def record_post_delete(sender, instance, **kwargs):
         ZoneChangelog.objects.create(
             zone=instance.zone,
             serial=0,
-            action="DELETE",
+            action=ZoneChangelog.Action.DELETE,
             name=instance.name,
             rdtype=instance.type,
             value=instance.value,

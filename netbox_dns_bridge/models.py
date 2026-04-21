@@ -42,18 +42,15 @@ class ZoneChangelog(models.Model):
     For updates (value changed), two rows are written: DELETE of old + ADD of new.
     """
 
-    ACTION_ADD = "ADD"
-    ACTION_DELETE = "DELETE"
-    ACTION_CHOICES = [
-        (ACTION_ADD, "Add"),
-        (ACTION_DELETE, "Delete"),
-    ]
+    class Action(models.TextChoices):
+        ADD = "ADD", "Add"
+        DELETE = "DELETE", "Delete"
 
     zone = models.ForeignKey(
         "netbox_dns.Zone", on_delete=models.CASCADE, db_index=True
     )
     serial = models.BigIntegerField(db_index=True)
-    action = models.CharField(max_length=10, choices=ACTION_CHOICES)
+    action = models.CharField(max_length=10, choices=Action)
     name = models.CharField(max_length=255)
     rdtype = models.CharField(max_length=10)
     value = models.TextField()
@@ -63,6 +60,14 @@ class ZoneChangelog(models.Model):
         ordering = ["serial", "id"]
         indexes = [
             models.Index(fields=["zone", "serial"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    action__in=[Action.ADD, Action.DELETE],
+                ),
+                name="netbox_dns_bridge_zc_action_ck",
+            ),
         ]
 
     def __str__(self):

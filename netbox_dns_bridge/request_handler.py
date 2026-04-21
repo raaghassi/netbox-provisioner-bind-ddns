@@ -374,8 +374,8 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
         prev_serial = client_serial
         for serial, group in itertools.groupby(changes, key=lambda c: c.serial):
             entries = list(group)
-            deletes = [e for e in entries if e.action == "DELETE"]
-            adds = [e for e in entries if e.action == "ADD"]
+            deletes = [e for e in entries if e.action == ZoneChangelog.Action.DELETE]
+            adds = [e for e in entries if e.action == ZoneChangelog.Action.ADD]
 
             # Old SOA (serial before this change)
             old_soa_rdata = self._build_soa_rdata_with_serial(soa_rrset, prev_serial, zone.origin)
