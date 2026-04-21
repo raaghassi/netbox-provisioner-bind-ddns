@@ -34,6 +34,11 @@ class Command(BaseCommand):
             return
 
         for zone in nb_zones:
+            if zone.view is None:
+                self.stderr.write(
+                    self.style.WARNING(f"Skipping zone '{zone.name}': no view assigned")
+                )
+                continue
             # Determine view directory
             view_name = zone.view.name
             view_dir = os.path.join(base_path, view_name)
