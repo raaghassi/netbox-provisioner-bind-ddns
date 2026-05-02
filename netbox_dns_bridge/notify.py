@@ -15,6 +15,7 @@ import dns.name
 import dns.opcode
 import dns.query
 import dns.rcode
+import dns.rdata
 import dns.rdataclass
 import dns.rdatatype
 
@@ -54,6 +55,32 @@ def resolve_notify_targets(zone_id):
     return result
 
 
+def _build_soa_rdata(zone):
+    """
+    Build a dns.rdata SOA from a NetBox Zone, or None if the zone is missing.
+
+    The Answer-section SOA in a NOTIFY message tells the secondary the new
+    serial without it needing a follow-up SOA query. RFC 1996 § 3.7
+    recommends including it for that reason; secondaries without it (bind
+    logs "no serial") fall back to an SOA query, which works but is slower
+    and noisier in logs.
+    """
+    if zone is None:
+        return None
+
+    # NetBox stores the SOA fields as zone.soa_mname / .soa_rname / etc.
+    # (see netbox_dns/models/zone.py). Construct the wire-format SOA
+    # using these values.
+    mname = str(zone.soa_mname.fqdn).rstrip(".") + "."
+    rname = zone.soa_rname.rstrip(".") + "."
+    return dns.rdata.from_text(
+        dns.rdataclass.IN,
+        dns.rdatatype.SOA,
+        f"{mname} {rname} {zone.soa_serial} {zone.soa_refresh} "
+        f"{zone.soa_retry} {zone.soa_expire} {zone.soa_minimum}",
+    )
+
+
 def notify_zone(zone_id, zone_name, tsig_keyring=None, tsig_view_map=None):
     """
     Send DNS NOTIFY to all known transfer clients for a zone.
@@ -69,16 +96,34 @@ def notify_zone(zone_id, zone_name, tsig_keyring=None, tsig_view_map=None):
     if not targets:
         return
 
+    # Fetch the Zone once and pass its SOA into every send. The SOA is
+    # included in the Answer section so secondaries don't need to follow
+    # up with an SOA query (RFC 1996 § 3.7). Best-effort: if the zone
+    # lookup fails, fall back to a question-only NOTIFY.
+    soa_rdata = None
+    try:
+        from django.db import close_old_connections
+        from netbox_dns.models import Zone
+
+        close_old_connections()
+        zone = Zone.objects.only(
+            "soa_mname", "soa_rname", "soa_serial", "soa_refresh",
+            "soa_retry", "soa_expire", "soa_minimum",
+        ).select_related("soa_mname").get(pk=zone_id)
+        soa_rdata = _build_soa_rdata(zone)
+    except Exception:
+        logger.exception("Could not load SOA for zone_id=%s; sending question-only NOTIFY", zone_id)
+
     for target, port, view_name in targets:
         # Select the TSIG key matching this target's view
         keyname = None
         if tsig_view_map and view_name:
             keyname = tsig_view_map.get(view_name)
 
-        send_notify(zone_name, target, port, tsig_keyring, keyname=keyname)
+        send_notify(zone_name, target, port, tsig_keyring, keyname=keyname, soa_rdata=soa_rdata)
 
 
-def send_notify(zone_name, target, port, tsig_keyring=None, keyname=None):
+def send_notify(zone_name, target, port, tsig_keyring=None, keyname=None, soa_rdata=None):
     """
     Send a DNS NOTIFY message for the given zone to a single target.
 
@@ -89,6 +134,8 @@ def send_notify(zone_name, target, port, tsig_keyring=None, keyname=None):
         tsig_keyring: Optional dict of {dns.name.Name: dns.tsig.Key} for TSIG signing.
         keyname: Optional dns.name.Name specifying which key from the keyring to use.
             If None and the keyring has exactly one key, that key is used.
+        soa_rdata: Optional dns.rdata SOA placed in the Answer section so the
+            secondary learns the new serial without a follow-up SOA query.
     """
     try:
         qname = dns.name.from_text(zone_name + ".")
@@ -103,6 +150,20 @@ def send_notify(zone_name, target, port, tsig_keyring=None, keyname=None):
             dns.rdatatype.SOA,
             create=True,
         )
+
+        # Answer section: SOA RR with the new serial (RFC 1996 § 3.7).
+        # Without this, secondaries fall back to a separate SOA query
+        # ("no serial" in bind's log). The query still works but is
+        # slower and double-the-roundtrips.
+        if soa_rdata is not None:
+            answer_rrset = notify_msg.find_rrset(
+                dns.message.ANSWER,
+                qname,
+                dns.rdataclass.IN,
+                dns.rdatatype.SOA,
+                create=True,
+            )
+            answer_rrset.add(soa_rdata, ttl=0)
 
         if tsig_keyring:
             if keyname and keyname in tsig_keyring:

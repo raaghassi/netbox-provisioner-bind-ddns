@@ -3,7 +3,13 @@ Debounced DNS NOTIFY dispatcher.
 
 Provides schedule_notify() for signal handlers and a suppress_notify
 context manager for the DDNS handler to prevent double-firing.
+
+flush_pending() drains any debounced timers synchronously — registered
+as an atexit hook so short-lived callers (one-shot management commands,
+PostSync workflow scripts) don't lose NOTIFYs when the process exits
+before the 2s debounce expires.
 """
+import atexit
 import logging
 import threading
 
@@ -15,12 +21,14 @@ from . import notify
 logger = logging.getLogger("netbox_dns_bridge.notify_dispatcher")
 
 _lock = threading.Lock()
-_pending: dict[int, threading.Timer] = {}
+_pending: dict[int, tuple[threading.Timer, str]] = {}
 _tsig_keyring = None
 _tsig_view_map = None
 _suppress = threading.local()
+_atexit_registered = False
 
 DEBOUNCE_SECONDS = 2.0
+SHUTDOWN_NOTIFY_TIMEOUT_SECONDS = 10.0
 
 
 def get_tsig_keyring():
@@ -93,14 +101,23 @@ def schedule_notify(zone_id: int, zone_name: str):
     if getattr(_suppress, "active", False):
         return
 
+    global _atexit_registered
     with _lock:
         existing = _pending.pop(zone_id, None)
         if existing:
-            existing.cancel()
+            existing[0].cancel()
         timer = threading.Timer(DEBOUNCE_SECONDS, _fire_notify, args=(zone_id, zone_name))
         timer.daemon = True
         timer.start()
-        _pending[zone_id] = timer
+        _pending[zone_id] = (timer, zone_name)
+
+        # Register the atexit drain on first use. Doing this lazily means
+        # processes that never schedule a NOTIFY (e.g. read-only management
+        # commands) don't pay any registration cost. The flag avoids
+        # double-registration when many records change in one process.
+        if not _atexit_registered:
+            atexit.register(flush_pending)
+            _atexit_registered = True
 
 
 def _fire_notify(zone_id: int, zone_name: str):
@@ -119,6 +136,53 @@ def _fire_notify(zone_id: int, zone_name: str):
         },
         daemon=True,
     ).start()
+
+
+def flush_pending():
+    """
+    Cancel any debounced timers and send their NOTIFYs synchronously.
+
+    Registered as an atexit hook so short-lived callers (one-shot
+    management commands, the PostSync workflow's `manage.py shell -c`)
+    finish their NOTIFY work before the process exits and daemon
+    threads die.
+
+    Each NOTIFY is dispatched on its own thread so a single unreachable
+    target doesn't stall the others; the function joins all of them
+    with a per-target timeout cap.
+    """
+    with _lock:
+        pending = list(_pending.values())
+        _pending.clear()
+
+    if not pending:
+        return
+
+    logger.info("Flushing %d pending NOTIFY(s) at shutdown", len(pending))
+
+    threads = []
+    for timer, zone_name in pending:
+        # The timer may already have fired between the lock release and
+        # cancel(); cancel() is a no-op in that case.
+        timer.cancel()
+        # Re-resolve the zone_id from the canceled timer's args so the
+        # synchronous dispatch matches what _fire_notify would have done.
+        zone_id = timer.args[0]
+        t = threading.Thread(
+            target=notify.notify_zone,
+            kwargs={
+                "zone_id": zone_id,
+                "zone_name": zone_name,
+                "tsig_keyring": get_tsig_keyring(),
+                "tsig_view_map": get_tsig_view_map(),
+            },
+            daemon=False,  # block process exit until NOTIFY completes
+        )
+        t.start()
+        threads.append(t)
+
+    for t in threads:
+        t.join(timeout=SHUTDOWN_NOTIFY_TIMEOUT_SECONDS)
 
 
 class suppress_notify:
