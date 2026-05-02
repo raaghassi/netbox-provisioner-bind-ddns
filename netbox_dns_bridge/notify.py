@@ -68,10 +68,10 @@ def _build_soa_rdata(zone):
     if zone is None:
         return None
 
-    # NetBox stores the SOA fields as zone.soa_mname / .soa_rname / etc.
-    # (see netbox_dns/models/zone.py). Construct the wire-format SOA
-    # using these values.
-    mname = str(zone.soa_mname.fqdn).rstrip(".") + "."
+    # NetBox stores the SOA fields as zone.soa_mname (FK to NameServer)
+    # and .soa_rname (str). NameServer's __str__ returns the FQDN
+    # without trailing dot; rstrip+re-append handles either form.
+    mname = str(zone.soa_mname).rstrip(".") + "."
     rname = zone.soa_rname.rstrip(".") + "."
     return dns.rdata.from_text(
         dns.rdataclass.IN,
