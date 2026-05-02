@@ -35,3 +35,20 @@ README Change - Moving private keys to global scope since Bind 9.20 view scoped 
   on IXFR even when the response fits in a single message.
   Bind now accepts our IXFR responses cleanly; AXFR fallback is
   no longer needed for every record change.
+
+## 1.5.6 - 2026-05-02
+
+- Skip SOA records when writing IXFR changelog entries. netbox_dns
+  bumps the auto-managed `@ SOA` Record's serial via `update_serial()`
+  on every change, which fires post_save and used to record DELETE
+  + ADD SOA entries in our changelog. Those entries replayed back in
+  the IXFR difference sequence as record-level deltas instead of the
+  RFC 1995 boundary delimiters that the IXFR builder generates from
+  the zone's serial transitions, producing two SOAs per delimiter
+  (one real, one stray) and corrupting the wire format. Symptom on
+  bind: "failed while receiving responses: extra input data" → AXFR
+  fallback for every change. Symptom on dnspython: "IXFR base serial
+  mismatch".
+- IXFR builder also excludes `rdtype="SOA"` rows defensively so legacy
+  changelog data already in the database doesn't corrupt the next IXFR
+  served from a fixed plugin.

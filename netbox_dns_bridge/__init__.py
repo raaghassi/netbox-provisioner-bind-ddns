@@ -1,7 +1,7 @@
 from netbox.plugins import PluginConfig
 from django.conf import settings
 
-__version__ = "1.5.5"
+__version__ = "1.5.6"
 
 
 class DNSBridgeConfig(PluginConfig):

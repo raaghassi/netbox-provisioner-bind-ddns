@@ -10,6 +10,28 @@ from ..models import ZoneChangelog
 logger = logging.getLogger("netbox_dns_bridge.signals.changelog")
 
 
+def _is_soa_record(record):
+    """SOA records are IXFR protocol-level delimiters, not zone data.
+
+    netbox_dns auto-creates an `@ SOA` Record alongside each Zone and bumps
+    its serial as part of zone.update_serial(). Those saves fire post_save
+    on Record exactly like any other record edit, and our changelog
+    handlers used to pick them up as DELETE/ADD entries — making every
+    serial transition produce a stray pair of SOA delete/add records in
+    the IXFR difference sequence. RFC 1995 § 4 reserves SOA records for
+    the open/close markers and the per-sequence boundary delimiters; the
+    extra SOA inside the sequence body confuses bind ("failed while
+    receiving responses: extra input data") and dnspython's IXFR client
+    ("IXFR base serial mismatch"), forcing every IXFR to fall back to
+    AXFR.
+
+    Skip SOAs here — the IXFR builder constructs the delimiter SOAs
+    itself from the zone's current/old serial, and the changelog
+    journal carries only user-visible record changes.
+    """
+    return getattr(record, "type", None) == "SOA"
+
+
 @receiver(pre_save, sender=Record)
 def record_pre_save(sender, instance, **kwargs):
     """Cache old record values so post_save can detect changes for IXFR changelog."""
@@ -37,6 +59,8 @@ def record_post_save(sender, instance, created, **kwargs):
     the zone SOA serial *after* post_save fires.  The zone_post_save_backfill_serial
     handler fills in the real serial once update_serial() saves.
     """
+    if _is_soa_record(instance):
+        return
     try:
         ttl = instance.ttl or instance.zone.default_ttl
 
@@ -86,6 +110,8 @@ def record_post_save(sender, instance, created, **kwargs):
 @receiver(post_delete, sender=Record)
 def record_post_delete(sender, instance, **kwargs):
     """Write IXFR changelog DELETE entry (serial=0 sentinel, backfilled by zone handler)."""
+    if _is_soa_record(instance):
+        return
     try:
         ttl = instance.ttl or instance.zone.default_ttl
         ZoneChangelog.objects.create(

@@ -338,13 +338,19 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
             self._handle_axfr_request(query, zone, peer, nb_view, dname)
             return
 
-        # Query changelog for entries between client serial and current serial
+        # Query changelog for entries between client serial and current serial.
+        # Exclude SOA — bind treats SOA RRs in an IXFR difference sequence as
+        # protocol delimiters, not zone-data deltas. Stray DELETE/ADD SOA rows
+        # written by older builds of this plugin (before the
+        # signals/changelog.py SOA-skip) would corrupt every IXFR and force
+        # AXFR fallback. The exclude here defends the wire format even if
+        # legacy rows are still in the database.
         changes = list(
             ZoneChangelog.objects.filter(
                 zone=nb_zone,
                 serial__gt=client_serial,
                 serial__lte=current_serial,
-            ).order_by("serial", "id")
+            ).exclude(rdtype="SOA").order_by("serial", "id")
         )
 
         if not changes:
