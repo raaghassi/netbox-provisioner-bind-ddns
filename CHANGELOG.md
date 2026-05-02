@@ -24,3 +24,14 @@ README Change - Moving private keys to global scope since Bind 9.20 view scoped 
   debounce timer is a daemon thread and dies with the process.
   schedule_notify now lazily registers atexit on first use so
   zero-NOTIFY processes pay no overhead.
+
+## 1.5.5 - 2026-05-02
+
+- IXFR responses now use `dns.renderer.Renderer` + `add_multi_tsig`
+  (the same path AXFR uses) instead of the simpler `dns.message`
+  API. The latter produced wire-format that bind rejected with
+  "failed while receiving responses: extra input data" — bind's
+  zone-transfer parser expects multi-message-aware TSIG signing
+  on IXFR even when the response fits in a single message.
+  Bind now accepts our IXFR responses cleanly; AXFR fallback is
+  no longer needed for every record change.

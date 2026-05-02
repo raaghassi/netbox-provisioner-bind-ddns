@@ -418,28 +418,91 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
         # Closing: current SOA
         rrsets.append(current_soa_rrset)
 
-        # Build IXFR response using dns.message (standard serialization)
-        response = dns.message.make_response(query)
-        response.flags |= dns.flags.AA
-        for rrset in rrsets:
-            response.answer.append(rrset)
-
-        response.use_tsig(
-            self.server.keyring,
-            keyname=query.keyname,
-            original_id=query.id,
+        # Build the IXFR response using dns.renderer.Renderer +
+        # add_multi_tsig — the same machinery AXFR uses. Bind rejects
+        # IXFR responses serialized through the simpler dns.message API
+        # ("failed while receiving responses: extra input data") because
+        # zone-transfer responses need multi-message TSIG signing even
+        # when they fit in a single message; the message-level TSIG
+        # produced by Message.use_tsig() puts the wire-format TSIG in a
+        # subtly different shape than what bind's transfer parser expects.
+        # Renderer + add_multi_tsig produces the standard format both
+        # named and dnspython's own from_wire/from_file IXFR clients
+        # accept.
+        tsig_key = self.server.keyring[query.keyname]
+        r = dns.renderer.Renderer(
+            id=query.id,
+            flags=(dns.flags.QR | dns.flags.AA),
+            max_size=self.MAX_WIRE,
+            origin=None,
         )
+        r.add_question(
+            query.question[0].name,
+            query.question[0].rdtype,
+            query.question[0].rdclass,
+        )
+        tsig_ctx = None
+        for rrset in rrsets:
+            try:
+                r.add_rrset(dns.renderer.ANSWER, rrset)
+                if r.max_size - len(r.output.getvalue()) < self.RESERVED_TSIG:
+                    raise dns.exception.TooBig("TSIG wont fit")
+            except dns.exception.TooBig:
+                # Current renderer is full — close + send it, then
+                # start a fresh Renderer for the next message and re-
+                # add this rrset to that one. Same multi-message
+                # pattern as _handle_axfr_request above.
+                r.write_header()
+                tsig_ctx = r.add_multi_tsig(
+                    ctx=tsig_ctx,
+                    secret=tsig_key.secret,
+                    keyname=query.keyname,
+                    algorithm=tsig_key.algorithm,
+                    fudge=300,
+                    id=query.id,
+                    tsig_error=0,
+                    other_data=b"",
+                    request_mac=r.mac if tsig_ctx else query.mac,
+                )
+                wire = r.get_wire()
+                self._send_response(wire)
 
-        try:
-            wire = response.to_wire()
-        except dns.exception.TooBig:
-            logger.info(
-                f"{peer} IXFR {nb_view.name}/{dname} "
-                f"response too large ({len(changes)} changes), falling back to AXFR"
-            )
-            self._handle_axfr_request(query, zone, peer, nb_view, dname)
-            return
+                r = dns.renderer.Renderer(
+                    id=query.id,
+                    flags=(dns.flags.QR | dns.flags.AA),
+                    max_size=self.MAX_WIRE,
+                    origin=None,
+                )
+                r.add_question(
+                    query.question[0].name,
+                    query.question[0].rdtype,
+                    query.question[0].rdclass,
+                )
+                try:
+                    r.add_rrset(dns.renderer.ANSWER, rrset)
+                except dns.exception.TooBig:
+                    logger.info(
+                        f"{peer} IXFR {nb_view.name}/{dname} "
+                        f"single rrset {rrset.name}/"
+                        f"{dns.rdatatype.to_text(rrset.rdtype)} exceeds "
+                        f"MAX_WIRE; falling back to AXFR"
+                    )
+                    self._handle_axfr_request(query, zone, peer, nb_view, dname)
+                    return
 
+        r.write_header()
+        tsig_ctx = r.add_multi_tsig(
+            ctx=tsig_ctx,
+            secret=tsig_key.secret,
+            keyname=query.keyname,
+            algorithm=tsig_key.algorithm,
+            fudge=300,
+            id=query.id,
+            tsig_error=0,
+            other_data=b"",
+            request_mac=r.mac if tsig_ctx else query.mac,
+        )
+        wire = r.get_wire()
         self._send_response(wire)
 
         self._record_transfer_client(peer, dname, nb_view)
