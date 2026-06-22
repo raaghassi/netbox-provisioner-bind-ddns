@@ -1,7 +1,7 @@
 from netbox.plugins import PluginConfig
 from django.conf import settings
 
-__version__ = "1.5.6"
+__version__ = "1.6.0"
 
 
 class DNSBridgeConfig(PluginConfig):
@@ -12,6 +12,11 @@ class DNSBridgeConfig(PluginConfig):
     author = "Sven Luethi"
     author_email = "dev@sven.luethi.co"
     base_url = "dns-bridge"
+
+    # NOTIFY tuning, pruning options, and static targets are NOT plugin
+    # settings — they are managed in NetBox itself (UI/REST) via the
+    # NotifyConfig singleton and StaticNotifyTarget models, which are the sole
+    # source of truth. PLUGINS_CONFIG still carries tsig_keys / axfr / ddns.
 
     def ready(self):
         self.settings = settings.PLUGINS_CONFIG.get(self.name, None)

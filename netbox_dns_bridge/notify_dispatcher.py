@@ -150,6 +150,15 @@ def flush_pending():
     Each NOTIFY is dispatched on its own thread so a single unreachable
     target doesn't stall the others; the function joins all of them
     with a per-target timeout cap.
+
+    The dispatch threads are daemon=True so the join cap is a REAL upper bound
+    on shutdown: live targets answer within a fraction of a second and complete
+    well inside the cap, while a NOTIFY blocked on a dead/slow target (or a
+    hung resolver) is abandoned at the cap instead of holding the interpreter
+    open indefinitely (non-daemon threads are re-joined with no timeout during
+    CPython shutdown, which would defeat the cap). Dropping an in-flight NOTIFY
+    to an unreachable target is already tolerated by design — the secondary's
+    SOA refresh is the backstop.
     """
     with _lock:
         pending = list(_pending.values())
@@ -176,7 +185,7 @@ def flush_pending():
                 "tsig_keyring": get_tsig_keyring(),
                 "tsig_view_map": get_tsig_view_map(),
             },
-            daemon=False,  # block process exit until NOTIFY completes
+            daemon=True,  # join cap below is the real bound; see docstring
         )
         t.start()
         threads.append(t)

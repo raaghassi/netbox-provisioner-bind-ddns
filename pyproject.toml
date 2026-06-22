@@ -26,5 +26,12 @@ zip-safe = false
 [tool.setuptools.packages.find]
 where = ["."]
 
+# Ship the NetBox UI detail templates in the wheel. include-package-data alone
+# relies on a VCS file-finder that isn't guaranteed during a git+https wheel
+# build, so declare them explicitly — otherwise the object detail views 500
+# with TemplateDoesNotExist.
+[tool.setuptools.package-data]
+netbox_dns_bridge = ["templates/**/*.html"]
+
 [tool.setuptools.dynamic]
 version = { attr = "netbox_dns_bridge.__version__" }
