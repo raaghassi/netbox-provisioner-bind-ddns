@@ -35,6 +35,7 @@ class NotifyConfigSerializer(NetBoxModelSerializer):
         fields = (
             "id", "url", "display", "timeout", "attempts", "retry_backoff",
             "max_workers", "prune_strategy", "prune_max_failures", "prune_ttl",
+            "catalog_zones",
             "tags", "custom_fields", "created", "last_updated",
         )
         brief_fields = ("id", "url", "display")

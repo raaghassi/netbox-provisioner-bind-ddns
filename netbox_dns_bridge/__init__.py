@@ -1,7 +1,7 @@
 from netbox.plugins import PluginConfig
 from django.conf import settings
 
-__version__ = "1.6.3"
+__version__ = "1.6.4"
 
 
 class DNSBridgeConfig(PluginConfig):
@@ -24,6 +24,13 @@ class DNSBridgeConfig(PluginConfig):
             raise RuntimeError(
                 f"{self.name}: Plugin {self.verbose_name} failed to initialize due to missing settings. Terminating Netbox."
             )
+
+        # MUST call the base PluginConfig.ready(): it is what registers the
+        # navigation menu (register_menu), model feature registry
+        # (register_models), search indexes, template extensions and GraphQL.
+        # Overriding ready() without super() silently drops ALL of that — the
+        # plugin still loads/migrates/serves pages, but its menu never appears.
+        super().ready()
 
         from . import signals  # noqa: F401  (register signal receivers)
 

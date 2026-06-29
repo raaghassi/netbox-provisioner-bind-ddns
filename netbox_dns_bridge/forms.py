@@ -44,4 +44,5 @@ class NotifyConfigForm(NetBoxModelForm):
         fields = (
             "timeout", "attempts", "retry_backoff", "max_workers",
             "prune_strategy", "prune_max_failures", "prune_ttl",
+            "catalog_zones",
         )
