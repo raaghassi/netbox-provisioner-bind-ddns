@@ -214,6 +214,18 @@ class NotifyConfig(NetBoxModel):
         default=604800,
         help_text="'ttl' strategy: prune if no successful NOTIFY within this many seconds.",
     )
+    catalog_zones = models.CharField(
+        max_length=512,
+        blank=True,
+        default="",
+        help_text=(
+            "Comma-separated catalog zone name(s), as configured in bind's "
+            "catalog-zones, to NOTIFY when zone MEMBERSHIP changes (zone add / rename "
+            "/ delete) so bind re-AXFRs the catalog promptly instead of waiting for "
+            "its SOA refresh. The NOTIFY is sent to the no-view static targets "
+            "(unsigned — ensure bind's allow-notify covers them). Empty = disabled."
+        ),
+    )
 
     class Meta:
         verbose_name = "NOTIFY configuration"

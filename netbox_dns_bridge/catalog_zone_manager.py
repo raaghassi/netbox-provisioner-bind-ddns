@@ -24,7 +24,11 @@ logger = logging.getLogger("netbox_dns_bridge.catz")
 _LOCK = threading.Lock()
 _SERIAL_MAX = 0xFFFFFFFF
 _SERIAL_OBJ: Optional[IntegerKeyValueSetting] = None
-_PREVIOUS_LAST_ZONE_UPDATE = None
+# (active_zone_count, max_last_updated) — see create_zone() for why the COUNT is
+# tracked alongside the timestamp (a non-latest zone deletion leaves max(last_updated)
+# unchanged, so a timestamp-only key would miss deletions and never advance the catalog
+# serial → bind never deprovisions the removed member).
+_PREVIOUS_ZONE_STATE = None
 
 
 def init() -> None:
@@ -93,22 +97,25 @@ def _create_missing_member_identifiers() -> None:
 
 
 def create_zone(name, view_name) -> dns.zone.Zone:
-    global _PREVIOUS_LAST_ZONE_UPDATE
+    global _PREVIOUS_ZONE_STATE
     with _LOCK:
-        latest_zone = (
-            Zone.objects.filter(status=ZoneStatusChoices.STATUS_ACTIVE)
-            .order_by("-last_updated")
-            .first()
-        )
+        active_zones = Zone.objects.filter(status=ZoneStatusChoices.STATUS_ACTIVE)
+        latest_zone = active_zones.order_by("-last_updated").first()
 
         last_zone_update = latest_zone.last_updated if latest_zone is not None else None
+        # Key the serial bump on (count, max_last_updated), not last_updated alone:
+        # deleting a non-latest zone leaves max(last_updated) unchanged, so a
+        # timestamp-only key would never bump the serial on a deletion and bind would
+        # keep serving the removed catalog member. The count flips on add AND delete;
+        # last_updated still catches in-place edits (rename, dnssec policy, status).
+        zone_state = (active_zones.count(), last_zone_update)
 
-        if _PREVIOUS_LAST_ZONE_UPDATE != last_zone_update:
+        if _PREVIOUS_ZONE_STATE != zone_state:
             if latest_zone is not None:
                 logger.debug(
                     f"Zone {latest_zone.name} was updated in view {latest_zone.view.name if latest_zone.view else '(no view)'}"
                 )
-            _PREVIOUS_LAST_ZONE_UPDATE = last_zone_update
+            _PREVIOUS_ZONE_STATE = zone_state
             _increment_serial()
 
     # Zone origin
