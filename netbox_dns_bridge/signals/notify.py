@@ -43,7 +43,15 @@ def record_post_save_notify(sender, instance, created, **kwargs):
 @receiver(post_delete, sender=Record)
 def record_post_delete_notify(sender, instance, **kwargs):
     """Schedule DNS NOTIFY when records are deleted."""
+    # During a Zone delete, Django fires this for each cascaded record AFTER the zone
+    # row is gone, so the lazy instance.zone access raises Zone.DoesNotExist and logs a
+    # spurious error per record. A per-zone NOTIFY is moot then anyway — bind
+    # deprovisions a removed catalog member via the catalog zone refresh, not a
+    # data-zone NOTIFY. Resolve the zone by id (no lazy FK) and skip if it's gone; a
+    # normal single-record delete still has its zone and NOTIFYs as before.
     try:
-        schedule_notify(instance.zone_id, instance.zone.name)
+        zone = Zone.objects.filter(pk=instance.zone_id).only("id", "name").first()
+        if zone is not None:
+            schedule_notify(zone.id, zone.name)
     except Exception:
         logger.exception("Failed to schedule NOTIFY (post_delete)")
