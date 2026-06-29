@@ -112,6 +112,16 @@ def record_post_delete(sender, instance, **kwargs):
     """Write IXFR changelog DELETE entry (serial=0 sentinel, backfilled by zone handler)."""
     if _is_soa_record(instance):
         return
+    # Skip when the parent Zone is itself being deleted. Django fires post_delete
+    # AFTER all cascade SQL deletes, so during a Zone delete the records' post_delete
+    # runs once the zone row (and its changelog rows) are already gone — a
+    # ZoneChangelog insert here violates the zone FK ("zone_id N is not present in
+    # netbox_dns_zone"), poisons the transaction, and rolls back the WHOLE delete,
+    # leaving the zone undeletable via the UI. There's no IXFR diff to journal against
+    # a vanished zone anyway (bind drops the whole zone; the zone's existing changelog
+    # rows cascade away with it).
+    if not Zone.objects.filter(pk=instance.zone_id).exists():
+        return
     try:
         ttl = instance.ttl or instance.zone.default_ttl
         ZoneChangelog.objects.create(
