@@ -1,4 +1,5 @@
 from django.urls import path
+from django.views.generic import RedirectView
 
 from netbox.views.generic import ObjectChangeLogView
 
@@ -45,4 +46,16 @@ urlpatterns = [
     # NOTIFY configuration (singleton)
     path("config/", views.NotifyConfigView.as_view(), name="notifyconfig"),
     path("config/edit/", views.NotifyConfigEditView.as_view(), name="notifyconfig_edit"),
+    # The singleton has no real list view, but NetBox's generic object/edit
+    # chrome HARD-reverses <model>_list for the breadcrumb (utilities.views
+    # get_action_url, no fallback) — so the detail/edit pages 500 without it.
+    # Alias it to the singleton page. (Tab reverses for changelog/journal are
+    # soft, so those simply stay hidden — no route needed.)
+    path(
+        "config/list/",
+        RedirectView.as_view(
+            pattern_name="plugins:netbox_dns_bridge:notifyconfig", permanent=False
+        ),
+        name="notifyconfig_list",
+    ),
 ]
