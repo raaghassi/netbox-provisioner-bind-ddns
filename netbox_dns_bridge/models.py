@@ -240,7 +240,9 @@ class NotifyConfig(NetBoxModel):
         super().save(*args, **kwargs)
 
     def get_absolute_url(self):
-        return reverse("plugins:netbox_dns_bridge:notifyconfig")
+        # pk-based to match the (now pk-based) detail route; the singleton is
+        # always pk=1. Mirrors StaticNotifyTarget.get_absolute_url above.
+        return reverse("plugins:netbox_dns_bridge:notifyconfig", args=[self.pk])
 
     @classmethod
     def get_solo(cls):
