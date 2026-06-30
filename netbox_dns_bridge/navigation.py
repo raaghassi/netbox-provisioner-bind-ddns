@@ -21,7 +21,9 @@ menu = PluginMenu(
                     buttons=_static_target_buttons,
                 ),
                 PluginMenuItem(
-                    link="plugins:netbox_dns_bridge:notifyconfig",
+                    # pk-less landing (notifyconfig itself is now pk-based);
+                    # redirects to the singleton detail.
+                    link="plugins:netbox_dns_bridge:notifyconfig_list",
                     link_text="NOTIFY Configuration",
                 ),
             ),

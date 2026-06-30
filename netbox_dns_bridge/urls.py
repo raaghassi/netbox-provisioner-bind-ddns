@@ -1,5 +1,4 @@
 from django.urls import path
-from django.views.generic import RedirectView
 
 from netbox.views.generic import ObjectChangeLogView
 
@@ -43,19 +42,18 @@ urlpatterns = [
         name="staticnotifytarget_changelog",
         kwargs={"model": models.StaticNotifyTarget},
     ),
-    # NOTIFY configuration (singleton)
-    path("config/", views.NotifyConfigView.as_view(), name="notifyconfig"),
-    path("config/edit/", views.NotifyConfigEditView.as_view(), name="notifyconfig_edit"),
-    # The singleton has no real list view, but NetBox's generic object/edit
-    # chrome HARD-reverses <model>_list for the breadcrumb (utilities.views
-    # get_action_url, no fallback) — so the detail/edit pages 500 without it.
-    # Alias it to the singleton page. (Tab reverses for changelog/journal are
-    # soft, so those simply stay hidden — no route needed.)
+    # NOTIFY configuration — a singleton (always pk=1). NetBox's generic object
+    # chrome builds the detail/edit/delete URLs (and get_absolute_url + the
+    # post-edit redirect) WITH the object's pk, so these must be pk-based like any
+    # model: a pk-less edit URL makes the detail page's Edit button reverse to the
+    # string "None" (get_action_url(instance,'edit',kwargs={'pk':1}) fails). The
+    # nav menu + breadcrumb 'list' need a STATIC (pk-less) entry, so 'config/'
+    # redirects to the pk=1 detail (NotifyConfigLandingView).
+    path("config/", views.NotifyConfigLandingView.as_view(), name="notifyconfig_list"),
+    path("config/<int:pk>/", views.NotifyConfigView.as_view(), name="notifyconfig"),
     path(
-        "config/list/",
-        RedirectView.as_view(
-            pattern_name="plugins:netbox_dns_bridge:notifyconfig", permanent=False
-        ),
-        name="notifyconfig_list",
+        "config/<int:pk>/edit/",
+        views.NotifyConfigEditView.as_view(),
+        name="notifyconfig_edit",
     ),
 ]

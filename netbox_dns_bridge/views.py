@@ -1,3 +1,6 @@
+from django.shortcuts import redirect
+from django.views import View
+
 from netbox.views import generic
 
 from . import filtersets, forms, models, tables
@@ -35,6 +38,16 @@ class StaticNotifyTargetBulkDeleteView(generic.BulkDeleteView):
 # ---------------------------------------------------------------------------
 # NOTIFY configuration (singleton — always pk=1)
 # ---------------------------------------------------------------------------
+class NotifyConfigLandingView(View):
+    """Pk-less entry for the nav menu + breadcrumb 'list'. The NOTIFY config is a
+    singleton, but NetBox's object chrome is pk-based, so ensure the row exists
+    and redirect to its pk=1 detail."""
+
+    def get(self, request, *args, **kwargs):
+        obj, _ = models.NotifyConfig.objects.get_or_create(pk=1)
+        return redirect("plugins:netbox_dns_bridge:notifyconfig", pk=obj.pk)
+
+
 class NotifyConfigView(generic.ObjectView):
     queryset = models.NotifyConfig.objects.all()
 
