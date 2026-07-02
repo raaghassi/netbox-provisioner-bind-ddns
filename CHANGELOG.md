@@ -52,3 +52,19 @@ README Change - Moving private keys to global scope since Bind 9.20 view scoped 
 - IXFR builder also excludes `rdtype="SOA"` rows defensively so legacy
   changelog data already in the database doesn't corrupt the next IXFR
   served from a fixed plugin.
+
+## 1.6.8 - 2026-07-02
+
+- Fix zone deletion failing with `IntegrityError: insert or update on table
+  "netbox_dns_bridge_zonechangelog" violates foreign key constraint ... Key
+  (zone_id)=(N) is not present in table "netbox_dns_zone"`, which rolled back
+  the delete and made zones undeletable from the UI. The 1.6.x guard checked
+  whether the zone row still exists, but Django's deletion collector deletes a
+  zone's Records (firing their post_delete) BEFORE the zone row itself — so the
+  check always passed and the handler journaled a changelog row for the doomed
+  zone after its changelog rows had already been cascade-deleted. With Django's
+  DEFERRABLE INITIALLY DEFERRED foreign keys the orphaned insert only fails at
+  COMMIT, which is also why the handler's try/except never caught it. Zones are
+  now marked in a thread-local set by a Zone pre_delete receiver (fired by the
+  collector before any row is deleted, including cascades from parent objects),
+  and the record changelog handlers skip journaling into marked zones.
