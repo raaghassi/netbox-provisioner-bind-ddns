@@ -23,7 +23,7 @@ import dns.rcode
 import dns.rdataclass
 import dns.rdatatype
 import dns.tsig
-from django.db import close_old_connections, transaction
+from django.db import close_old_connections, connections, transaction
 
 from netbox_dns.choices import RecordStatusChoices, ZoneStatusChoices
 from netbox_dns.models import Record, Zone
@@ -89,6 +89,16 @@ class DDNSBaseHandler(socketserver.BaseRequestHandler):
 
     def _send_response(self, data):
         raise NotImplementedError
+
+    def finish(self):
+        """Close this thread's DB connections before the request thread dies.
+
+        Same leak as DNSBaseRequestHandler.finish() (see request_handler.py):
+        one fresh ThreadingMixIn thread per UPDATE, ORM connections survive
+        the thread under CONN_MAX_AGE=300, and nothing ever closes them.
+        """
+        connections.close_all()
+        super().finish()
 
     # ------------------------------------------------------------------
     # Entry point

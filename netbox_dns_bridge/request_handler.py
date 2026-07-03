@@ -23,7 +23,7 @@ import dns.rrset
 import dns.tsig
 import dns.tsigkeyring
 import dns.zone
-from django.db import close_old_connections
+from django.db import close_old_connections, connections
 from netbox_dns.models import Zone, Record
 from netbox_dns.choices import ZoneStatusChoices, RecordStatusChoices
 from netbox_dns_bridge.models import ZoneChangelog, SeenTransferClient
@@ -41,6 +41,23 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
         self.MAX_WIRE = 65535
         self.RESERVED_TSIG = 300
         super().__init__(request, client_address, server)
+
+    def finish(self) -> None:
+        """Close this thread's DB connections before the request thread dies.
+
+        socketserver runs handle() inside a try/finally that always calls
+        finish(), and ThreadingMixIn gives every request a fresh thread. Any
+        ORM query in that thread opens a connection that NOTHING else closes:
+        NetBox runs with CONN_MAX_AGE=300 (netbox-docker DB_CONN_MAX_AGE
+        default), so close_old_connections() treats a fresh connection as
+        current, and no later call ever runs on a dead thread. The result was
+        ~1 leaked idle connection per hour in dev until postgres hit
+        max_connections (100) and locked the web UI out entirely.
+        connections.close_all() closes the CURRENT thread's connections
+        unconditionally — exactly right on the way out.
+        """
+        connections.close_all()
+        super().finish()
 
     def _getZoneFromNB(self, zone_name, view_name) -> Optional[dns.zone.Zone]:
         try:

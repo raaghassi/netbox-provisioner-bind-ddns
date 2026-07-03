@@ -68,3 +68,19 @@ README Change - Moving private keys to global scope since Bind 9.20 view scoped 
   now marked in a thread-local set by a Zone pre_delete receiver (fired by the
   collector before any row is deleted, including cascades from parent objects),
   and the record changelog handlers skip journaling into marked zones.
+
+## 1.6.9 - 2026-07-03
+
+- Fix a database connection leak in every short-lived thread the plugin
+  spawns: the ThreadingMixIn per-request threads of the transfer endpoint
+  (SOA/AXFR/IXFR) and DDNS receiver, and the per-NOTIFY dispatch threads.
+  Each thread's first ORM query opened a connection that nothing ever
+  closed — NetBox runs with CONN_MAX_AGE=300 (netbox-docker default), so
+  the existing close_old_connections() calls treated fresh connections as
+  current, and dead threads never call again. The endpoint leaked ~1 idle
+  connection per hour in dev until postgres hit max_connections (100),
+  locking the NetBox web UI out entirely ("remaining connection slots are
+  reserved for roles with the SUPERUSER attribute"). Request handlers now
+  close the thread's connections in socketserver's finish() hook (always
+  runs, even when handle() raises) and notify_zone() closes on the way out
+  of its dedicated thread, via django.db.connections.close_all().

@@ -277,6 +277,23 @@ def notify_zone(zone_id, zone_name, tsig_keyring=None, tsig_view_map=None):
         tsig_view_map: Optional dict of {view_name_str: dns.name.Name} mapping
             view names to TSIG key names for per-target key selection.
     """
+    try:
+        _notify_zone_cycle(zone_id, zone_name, tsig_keyring, tsig_view_map)
+    finally:
+        # notify_zone is a dedicated-thread target (notify_dispatcher's
+        # _fire_notify / flush_pending). The thread dies on return, but its
+        # ORM connections would survive it: CONN_MAX_AGE=300 means
+        # close_old_connections() treats them as current, and no later call
+        # ever runs on a dead thread. Close them unconditionally — this was
+        # one of the leak paths that exhausted postgres max_connections in
+        # dev. (The _send pool workers do network only, no ORM.)
+        from django.db import connections
+        connections.close_all()
+
+
+def _notify_zone_cycle(zone_id, zone_name, tsig_keyring, tsig_view_map):
+    """One NOTIFY cycle; see notify_zone. Split out so the thread-exit
+    connection cleanup wraps every return path in one place."""
     # Target construction is deliberately fault-isolated: each helper catches
     # its own errors and returns a safe value, so a failure building static
     # targets / reading config / loading SOA can never abort the dynamic NOTIFY.
