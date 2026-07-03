@@ -84,3 +84,16 @@ README Change - Moving private keys to global scope since Bind 9.20 view scoped 
   close the thread's connections in socketserver's finish() hook (always
   runs, even when handle() raises) and notify_zone() closes on the way out
   of its dedicated thread, via django.db.connections.close_all().
+
+## 1.6.10 - 2026-07-03
+
+- Cap concurrent request threads in the transfer endpoint and DDNS receiver.
+  Stock ThreadingMixIn spawns an unbounded thread per request, so a burst of
+  DNS traffic meant unbounded live threads — each holding up to one database
+  connection while it works, which can exhaust postgres max_connections even
+  with the 1.6.9 per-thread cleanup in place. A BoundedThreadingMixIn
+  semaphore now caps each server (AXFR UDP/TCP, DDNS UDP/TCP) at
+  `max_concurrent_requests` threads (new plugin setting, default 16). When
+  saturated, the accept loop blocks and further requests wait in the kernel
+  listen backlog / UDP receive buffer — standard DNS overload behavior;
+  clients retry. A warning is logged when the cap is hit.

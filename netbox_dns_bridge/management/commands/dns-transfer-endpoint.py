@@ -141,13 +141,20 @@ class Command(BaseCommand):
             "ixfr_enabled", axfr_config.get("ixfr_as_axfr", False)
         )
 
+        # Per-server cap on concurrent request threads (BoundedThreadingMixIn).
+        # Each live thread can hold one DB connection, so the worst case across
+        # the four servers is 4x this value against postgres max_connections.
+        max_concurrent = self.settings.get("max_concurrent_requests", 16)
+
         udp_server = UDPDNSServer(
             (address, port), UDPRequestHandler, self.keyring, self.tsig_view_map,
             ixfr_enabled=ixfr_enabled,
+            max_concurrent_requests=max_concurrent,
         )
         tcp_server = TCPDNSServer(
             (address, port), TCPRequestHandler, self.keyring, self.tsig_view_map,
             ixfr_enabled=ixfr_enabled,
+            max_concurrent_requests=max_concurrent,
         )
 
         udp_thread = threading.Thread(
@@ -178,12 +185,14 @@ class Command(BaseCommand):
                 self.keyring, self.tsig_view_map,
                 allowed_zones=allowed_zones,
                 ddns_tag=ddns_tag,
+                max_concurrent_requests=max_concurrent,
             )
             ddns_tcp = ThreadingTCPDNSServer(
                 (address, ddns_port), DDNSTCPHandler,
                 self.keyring, self.tsig_view_map,
                 allowed_zones=allowed_zones,
                 ddns_tag=ddns_tag,
+                max_concurrent_requests=max_concurrent,
             )
 
             threading.Thread(target=ddns_udp.serve_forever, daemon=True).start()

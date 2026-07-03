@@ -63,6 +63,7 @@ tsig_keys                     | Maps a TSIG Key to be used for each view.
 ddns.allowed_zones            | Optional allowlist for RFC 2136 updates. Empty means any active zone in the mapped view.
 axfr.ixfr_enabled             | Enables native IXFR responses when changelog entries are available.
 axfr.ixfr_changelog_retention | Number of per-zone changelog entries to retain for IXFR generation.
+max_concurrent_requests       | Per-server cap on concurrent request threads (default 16). Applies to each of the four servers (AXFR UDP/TCP, DDNS UDP/TCP); when saturated, further requests wait in the kernel socket queues.
 
 ## Plugin compatibility
 This plugin is an extension to the netbox-plugin-dns plugin. As such the versioning of this plugin
