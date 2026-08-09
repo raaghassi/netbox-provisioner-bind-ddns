@@ -1,9 +1,24 @@
+from rest_framework import viewsets
 from rest_framework.response import Response
 
 from netbox.api.viewsets import NetBoxModelViewSet
 
 from .. import filtersets, models
-from .serializers import NotifyConfigSerializer, StaticNotifyTargetSerializer
+from .serializers import (
+    NotifyConfigSerializer,
+    SeenTransferClientSerializer,
+    StaticNotifyTargetSerializer,
+)
+
+
+class SeenTransferClientViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Read-only listing of the dynamic NOTIFY-target registry (plain DRF
+    viewset — the model is not a NetBoxModel, see the serializer note).
+    """
+
+    queryset = models.SeenTransferClient.objects.all()
+    serializer_class = SeenTransferClientSerializer
 
 
 class StaticNotifyTargetViewSet(NetBoxModelViewSet):

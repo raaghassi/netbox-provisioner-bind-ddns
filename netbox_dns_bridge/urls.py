@@ -42,6 +42,13 @@ urlpatterns = [
         name="staticnotifytarget_changelog",
         kwargs={"model": models.StaticNotifyTarget},
     ),
+    # Seen transfer clients — read-only list (machine-managed rows; see
+    # views.SeenTransferClientListView).
+    path(
+        "seen-clients/",
+        views.SeenTransferClientListView.as_view(),
+        name="seentransferclient_list",
+    ),
     # NOTIFY configuration — a singleton (always pk=1). NetBox's generic object
     # chrome builds the detail/edit/delete URLs (and get_absolute_url + the
     # post-edit redirect) WITH the object's pk, so these must be pk-based like any

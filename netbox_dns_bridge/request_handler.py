@@ -163,7 +163,17 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
         self._send_response(wire)
 
     def _record_transfer_client(self, peer, dname, nb_view) -> None:
-        """Record this client IP as having successfully transferred the zone."""
+        """
+        Record this client IP as a live secondary for the zone.
+
+        Called after a successful transfer AND after an authenticated SOA
+        refresh check. Transfers alone under-register: a secondary that
+        reloads a current disk copy never transfers, so it drops off the
+        dynamic NOTIFY list whenever its address changes and misses every
+        zone change until its next real transfer. An authenticated SOA
+        check proves the client holds the zone and is polling it, which
+        is exactly the liveness the NOTIFY target list needs.
+        """
         try:
             close_old_connections()
             nb_zone = Zone.objects.get(
@@ -190,6 +200,7 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
 
         response.answer.append(rrset)
 
+        refused = False
         if query.had_tsig:
             if query.keyname in self.server.keyring:
                 response.use_tsig(
@@ -200,10 +211,19 @@ class DNSBaseRequestHandler(socketserver.BaseRequestHandler):
                 # sign.  Send REFUSED without TSIG — consistent with
                 # _deny_request_bad_tsig() which also skips TSIG for BADKEY.
                 response.set_rcode(dns.rcode.REFUSED)
+                refused = True
 
         data = response.to_wire(max_size=512)
         self._send_response(data)
         logger.info(f"{peer} SOA {nb_view.name}/{dname}")
+        if not refused:
+            # Register SOA-checking secondaries as NOTIFY targets (see
+            # _record_transfer_client): the refresh check is the one
+            # signal a disk-restored, serial-current secondary still
+            # emits. last_transfer thereby means "last transfer OR
+            # authenticated SOA check" — the liveness timestamp that
+            # TTL-based pruning actually wants.
+            self._record_transfer_client(peer, dname, nb_view)
 
     def _handle_axfr_request(self, query, zone, peer, nb_view, dname) -> None:
         if query.keyname not in self.server.keyring:

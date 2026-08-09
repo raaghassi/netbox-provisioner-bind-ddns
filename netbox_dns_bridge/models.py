@@ -93,6 +93,10 @@ class SeenTransferClient(models.Model):
     view = models.ForeignKey(
         "netbox_dns.View", on_delete=models.SET_NULL, null=True, blank=True
     )
+    # Liveness timestamp: bumped on a successful transfer AND on an
+    # authenticated SOA refresh check (a disk-restored, serial-current
+    # secondary never transfers — its SOA polling is the only signal it
+    # still holds the zone).
     last_transfer = models.DateTimeField(auto_now=True)
 
     # NOTIFY liveness, maintained by notify.notify_zone() per send cycle. The

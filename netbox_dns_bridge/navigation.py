@@ -21,6 +21,11 @@ menu = PluginMenu(
                     buttons=_static_target_buttons,
                 ),
                 PluginMenuItem(
+                    # Read-only registry of dynamic NOTIFY targets.
+                    link="plugins:netbox_dns_bridge:seentransferclient_list",
+                    link_text="Seen Transfer Clients",
+                ),
+                PluginMenuItem(
                     # pk-less landing (notifyconfig itself is now pk-based);
                     # redirects to the singleton detail.
                     link="plugins:netbox_dns_bridge:notifyconfig_list",
