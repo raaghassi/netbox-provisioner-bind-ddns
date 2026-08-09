@@ -1,0 +1,17 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":dependencyDashboard"
+  ],
+  "description": [
+    "Processed by the central runner (raaghassi/renovate-aghassi-net).",
+    "Default managers (pep621, pip_requirements, github-actions).",
+    "Dashboard-approval: PRs only when ticked on the Dependency Dashboard."
+  ],
+  "baseBranchPatterns": [
+    "dev"
+  ],
+  "dependencyDashboardApproval": true,
+  "timezone": "America/Chicago"
+}
