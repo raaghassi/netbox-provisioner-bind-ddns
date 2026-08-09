@@ -97,3 +97,20 @@ README Change - Moving private keys to global scope since Bind 9.20 view scoped 
   saturated, the accept loop blocks and further requests wait in the kernel
   listen backlog / UDP receive buffer — standard DNS overload behavior;
   clients retry. A warning is logged when the cap is hit.
+
+## 1.7.0 - 2026-08-09
+
+- Register NOTIFY targets on authenticated SOA refresh checks, not only on
+  transfers. A secondary that reloads a current disk copy never transfers, so
+  it dropped off the dynamic NOTIFY list whenever its address changed and
+  missed every zone change until its next real transfer (observed live: a
+  cluster BIND replica restored from its PVC missed same-day record updates
+  while its two siblings were notified). `last_transfer` now means "last
+  transfer OR authenticated SOA check" — the liveness timestamp that
+  TTL-based pruning actually wants.
+- Seen Transfer Clients are now inspectable: read-only UI list under the DNS
+  Bridge menu and a read-only REST endpoint
+  (`/api/plugins/dns-bridge/seen-clients/`). Rows remain machine-managed
+  (created by the transfer/SOA handlers, liveness-updated and pruned by the
+  NOTIFY sender); the model deliberately stays a plain Django model so
+  per-transfer row updates never journal changelog entries.

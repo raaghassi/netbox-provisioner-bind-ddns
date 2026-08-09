@@ -63,3 +63,19 @@ class NotifyConfigEditView(generic.ObjectEditView):
     def get_object(self, **kwargs):
         obj, _ = models.NotifyConfig.objects.get_or_create(pk=1)
         return obj
+
+
+# ---------------------------------------------------------------------------
+# Seen transfer clients (read-only — the dynamic NOTIFY-target registry)
+# ---------------------------------------------------------------------------
+class SeenTransferClientListView(generic.ObjectListView):
+    """
+    List-only view: rows are machine-managed bookkeeping (transfer/SOA
+    registration + NOTIFY liveness + pruning), so no add/edit/delete
+    chrome — deleting a row by hand would only make the sender skip that
+    secondary until its next SOA check re-registers it.
+    """
+
+    queryset = models.SeenTransferClient.objects.all()
+    table = tables.SeenTransferClientTable
+    actions = ()

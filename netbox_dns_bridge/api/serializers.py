@@ -3,7 +3,28 @@ from rest_framework import serializers
 from netbox.api.serializers import NetBoxModelSerializer
 from netbox_dns.models import View
 
-from ..models import NotifyConfig, StaticNotifyTarget
+from ..models import NotifyConfig, SeenTransferClient, StaticNotifyTarget
+
+
+class SeenTransferClientSerializer(serializers.ModelSerializer):
+    """
+    Read-only (plain ModelSerializer: the model is deliberately not a
+    NetBoxModel — machine-managed rows must not journal a changelog entry
+    per transfer). zone/view are represented by name for at-a-glance
+    reads; all fields are read-only, the registry is maintained by the
+    transfer/SOA handlers and the NOTIFY sender.
+    """
+
+    zone = serializers.SlugRelatedField(slug_field="name", read_only=True)
+    view = serializers.SlugRelatedField(slug_field="name", read_only=True)
+
+    class Meta:
+        model = SeenTransferClient
+        fields = (
+            "id", "address", "zone", "view",
+            "last_transfer", "last_notify_ok", "notify_failures",
+        )
+        read_only_fields = fields
 
 
 class StaticNotifyTargetSerializer(NetBoxModelSerializer):
