@@ -8,7 +8,10 @@ dynamic = ["version"]
 description = "A bridge between netbox-plugin-dns and your DNS infrastructure with DDNS and IXFR support."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["netbox-plugin-dns>=1.5.0", "dnspython>=2.8.0"]
+# netbox-plugin-dns is bounded to one minor line, not an open floor. The
+# README pairing rule requires this plugin's major.minor to match it, and
+# an open floor is what let an incompatible plugin install in 2026-10.
+dependencies = ["netbox-plugin-dns>=1.7,<1.8", "dnspython>=2.8.0"]
 license = { file = "LICENSE.md" }
 authors = [{ name = "Sven Luethi", email = "dev@sven.luethi.co" }]
 

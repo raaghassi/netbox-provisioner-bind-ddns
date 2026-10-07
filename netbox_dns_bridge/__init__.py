@@ -9,6 +9,13 @@ class DNSBridgeConfig(PluginConfig):
     verbose_name = "Netbox DNS Bridge"
     description = "A bridge between netbox-plugin-dns and your DNS infrastructure with DDNS and IXFR support."
     version = __version__
+    # NetBox gates the plugin on these at load time and raises
+    # IncompatiblePluginError on a mismatch. The range follows the pairing
+    # rule in the README: this plugin's major.minor must match the
+    # netbox-plugin-dns major.minor it runs against. This plugin is 1.7, so
+    # it pairs with netbox-plugin-dns 1.7, which supports NetBox 4.7.
+    min_version = "4.7.0"
+    max_version = "4.7.99"
     author = "Sven Luethi"
     author_email = "dev@sven.luethi.co"
     base_url = "dns-bridge"
