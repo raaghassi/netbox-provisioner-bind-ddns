@@ -3,6 +3,7 @@ import dns.rdata
 import dns.rdataclass
 import dns.rdataset
 import dns.rdatatype
+import dns.rdtypes.ANY.TXT
 import dns.zone
 import netbox_dns.models
 
@@ -11,19 +12,26 @@ def format_txt_value(value: str) -> str:
     """Format a TXT record value for dnspython, chunking per RFC 1035 §3.3.14.
 
     NetBox stores TXT values as bare strings or already-quoted strings.
-    dnspython requires each character-string to be <=255 chars and quoted.
+    A character-string is at most 255 OCTETS and is quoted, with any embedded
+    quote or backslash escaped. dnspython renders that form.
     """
     # Strip existing quoting that NetBox may have added
     if value.startswith('"') and value.endswith('"'):
         value = value[1:-1].replace('" "', "").replace('"', '')
 
-    if len(value) > 255:
-        chunks = [
-            '"{}"'.format(value[i : i + 255])
-            for i in range(0, len(value), 255)
-        ]
-        return " ".join(chunks)
-    return f'"{value}"'
+    # Split on BYTES, not characters. RFC 1035 counts a character-string in
+    # octets, so a 200-character value of two-byte characters is 400 octets and
+    # must still be split.
+    data = value.encode("utf-8")
+    chunks = [data[i : i + 255] for i in range(0, len(data), 255)] or [b""]
+
+    # Let dnspython render the presentation form. Wrapping the value in quotes
+    # by hand does not escape an embedded quote or backslash, and dnspython
+    # then either fails to parse the result or reads the backslash as an escape
+    # and drops it.
+    return dns.rdtypes.ANY.TXT.TXT(
+        dns.rdataclass.IN, dns.rdatatype.TXT, strings=chunks
+    ).to_text()
 
 
 def export_bind_zone_file(nb_zone: netbox_dns.models.Zone, file_path: str):
