@@ -1,0 +1,54 @@
+---
+name: CI
+
+"on":
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+# A same-repo PR branch fires both triggers. Key the group on the event so the
+# two runs do not cancel each other.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: declarations, packaging and host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install the package and its host-test extra
+        run: python -m pip install --disable-pip-version-check -e ".[test]"
+
+      # NetBox does NOT fail loudly on a bad plugin gate: settings.py catches
+      # IncompatiblePluginError, warns and continues, so the plugin is skipped
+      # silently while NetBox reports healthy. The declarations cannot enforce
+      # themselves, so this enforces them from outside.
+      - name: Check version declarations agree
+        run: python tests/check_declarations.py
+
+      - name: Run host tests
+        run: python -m pytest -q
+
+      # packages.find has no include filter by default, so a tests tree would
+      # be discovered and published as a top-level module on the next release.
+      - name: Check the wheel ships only the plugin
+        run: |
+          python -m pip install --disable-pip-version-check build
+          python -m build --wheel --outdir dist/
+          python - <<'PY'
+          import pathlib, zipfile
+          wheel = next(pathlib.Path("dist").glob("*.whl"))
+          tops = {n.split("/")[0] for n in zipfile.ZipFile(wheel).namelist()}
+          tops = {t for t in tops if not t.endswith(".dist-info")}
+          extra = sorted(tops - {"netbox_dns_bridge"})
+          assert not extra, f"wheel ships extra top-level names: {extra}"
+          print(f"OK: {wheel.name} ships only {sorted(tops)}")
+          PY
