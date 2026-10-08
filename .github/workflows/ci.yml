@@ -1,0 +1,72 @@
+---
+name: CI
+
+# PORTABILITY: this file is written to run unchanged on Forgejo Actions, which
+# is the long-term home. It therefore depends on exactly ONE action -
+# actions/checkout@v4, the version already proven on the fleet's Forgejo runner
+# by workload-charts-aghassi-net/.forgejo/workflows/release.yaml and
+# renovate-forgejo/.forgejo/workflows/renovate.yaml - and uses runs-on:
+# ubuntu-latest, which maps to that runner's docker-executor label. Python
+# comes from the runner image rather than actions/setup-python, so there is no
+# second action to resolve. Moving to Forgejo is a copy into
+# .forgejo/workflows/ with no edits.
+
+"on":
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+# A same-repo PR branch fires both triggers. Key the group on the event so the
+# two runs do not cancel each other.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: declarations, packaging and host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # tomllib is stdlib from 3.11. Fail with a readable message rather than
+      # a ModuleNotFoundError deep inside the gate.
+      - name: Check the runner's Python is new enough
+        run: |
+          python3 - <<'PY'
+          import sys
+          if sys.version_info < (3, 11):
+              have = sys.version.split()[0]
+              sys.exit(f"need Python >= 3.11 for tomllib, runner has {have}")
+          print(f"OK: Python {sys.version.split()[0]}")
+          PY
+
+      - name: Install the package and its host-test extra
+        run: python3 -m pip install --disable-pip-version-check -e ".[test]"
+
+      # NetBox does NOT fail loudly on a bad plugin gate: settings.py catches
+      # IncompatiblePluginError, warns and continues, so the plugin is skipped
+      # silently while NetBox reports healthy. The declarations cannot enforce
+      # themselves, so this enforces them from outside.
+      - name: Check version declarations agree
+        run: python3 tests/check_declarations.py
+
+      - name: Run host tests
+        run: python3 -m pytest -q
+
+      # packages.find has no include filter by default, so a tests tree would
+      # be discovered and published as a top-level module on the next release.
+      - name: Check the wheel ships only the plugin
+        run: |
+          python3 -m pip install --disable-pip-version-check build
+          python3 -m build --wheel --outdir dist/
+          python3 - <<'PY'
+          import pathlib, zipfile
+          wheel = next(pathlib.Path("dist").glob("*.whl"))
+          tops = {n.split("/")[0] for n in zipfile.ZipFile(wheel).namelist()}
+          tops = {t for t in tops if not t.endswith(".dist-info")}
+          extra = sorted(tops - {"netbox_dns_bridge"})
+          assert not extra, f"wheel ships extra top-level names: {extra}"
+          print(f"OK: {wheel.name} ships only {sorted(tops)}")
+          PY

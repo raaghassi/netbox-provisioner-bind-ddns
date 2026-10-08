@@ -5,3 +5,8 @@ dist/
 build/
 .eggs/
 .claude/
+.venv/
+venv/
+.pytest_cache/
+.env
+test-results/

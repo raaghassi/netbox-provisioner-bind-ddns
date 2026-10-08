@@ -8,12 +8,17 @@ dynamic = ["version"]
 description = "A bridge between netbox-plugin-dns and your DNS infrastructure with DDNS and IXFR support."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["netbox-plugin-dns>=1.5.0", "dnspython>=2.8.0"]
+# netbox-plugin-dns is bounded to one minor line, not an open floor. The
+# README pairing rule requires this plugin's major.minor to match it, and
+# an open floor is what let an incompatible plugin install in 2026-10.
+dependencies = ["netbox-plugin-dns>=1.7,<1.8", "dnspython>=2.8.0"]
 license = { file = "LICENSE.md" }
 authors = [{ name = "Sven Luethi", email = "dev@sven.luethi.co" }]
 
 [project.optional-dependencies]
 dev = ["django-stubs", "pyright"]
+# Host-side gates only. Anything needing NetBox runs in the container job.
+test = ["pytest>=8", "packaging>=23"]
 
 [project.urls]
 Homepage = "https://github.com/Suraxius/netbox-plugin-dns-bridge"
@@ -25,6 +30,10 @@ zip-safe = false
 
 [tool.setuptools.packages.find]
 where = ["."]
+# Ship ONLY the plugin. Without this filter setuptools discovers every
+# top-level package, so adding a tests/ tree would publish a top-level
+# "tests" module to PyPI on the next release.
+include = ["netbox_dns_bridge*"]
 
 # Ship the NetBox UI detail templates in the wheel. include-package-data alone
 # relies on a VCS file-finder that isn't guaranteed during a git+https wheel
@@ -35,3 +44,8 @@ netbox_dns_bridge = ["templates/**/*.html"]
 
 [tool.setuptools.dynamic]
 version = { attr = "netbox_dns_bridge.__version__" }
+
+[tool.pytest.ini_options]
+# tests_engine/ is the framework-free layer: no Django, no NetBox, no
+# network. The container job owns everything that needs a real NetBox.
+testpaths = ["tests_engine"]
