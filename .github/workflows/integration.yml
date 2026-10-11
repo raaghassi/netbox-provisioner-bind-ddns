@@ -55,6 +55,14 @@ jobs:
     container:
       image: ghcr.io/catthehacker/ubuntu:act-latest
 
+    # A container job's default shell resolves to `sh -e {0}`, not bash, so
+    # `set -o pipefail` fails with "Illegal option" (dash has no pipefail).
+    # Pin bash once here rather than per step. The image is Ubuntu and ships
+    # bash, and act uses bash by default, so this is a no-op on Forgejo.
+    defaults:
+      run:
+        shell: bash
+
     services:
       postgres:
         image: postgres:16-alpine
