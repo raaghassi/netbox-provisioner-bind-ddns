@@ -13,6 +13,7 @@ from pathlib import Path
 
 import dns.rdatatype
 import dns.zone
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 
 from netbox_dns.models import NameServer, Record, Zone
@@ -31,10 +32,22 @@ TXT_CASES = {
     # An embedded backslash. Hand-rolled quoting let dnspython read it as an
     # escape and silently drop it, so the served value differed from NetBox.
     "backslash": "back\\slash",
-    # 200 two-byte characters = 400 octets. Chunking on CHARACTERS left a
-    # single 400-octet character-string, over the RFC 1035 255-octet limit.
-    "multibyte": "é" * 200,
+    # 400 ASCII characters. netbox_dns rewrites anything over 255 with its
+    # own _split_text_value into `"chunk" "chunk"`, so this exercises BOTH
+    # its chunking and the reassembly in format_txt_value, which must strip
+    # that quoting before re-chunking on octets.
+    "long_ascii": "".join(chr(97 + i % 26) for i in range(400)),
 }
+
+# NOT a case above, and the reason is load-bearing. netbox_dns refuses a TXT
+# value that is not printable ASCII (validators/dns_value.py: `if not
+# (record.value.isascii() and record.value.isprintable())`), so a multibyte
+# value cannot reach the exporter through a validated write. That is also why
+# netbox_dns can safely chunk on CHARACTERS: for values it accepts,
+# characters and octets are the same. format_txt_value still chunks on
+# octets, which matters only for rows that bypassed validation - bulk_create,
+# raw SQL, or data predating the check. NonAsciiRejectedTestCase pins the
+# assumption so it fails loudly if upstream relaxes it.
 
 
 class ZoneExportTXTTestCase(TestCase):
@@ -79,16 +92,43 @@ class ZoneExportTXTTestCase(TestCase):
                 got = b"".join(rdata.strings).decode("utf-8")
                 self.assertEqual(got, expected)
 
-    def test_long_value_is_chunked_within_the_octet_limit(self):
-        """RFC 1035 counts a character-string in OCTETS. Every chunk must fit,
-        and the chunks must still reassemble to the original value."""
+    def test_long_value_is_chunked_within_the_limit(self):
+        """Every character-string must fit in 255 octets, and the chunks must
+        still reassemble to the original value."""
         path = self._export()
         zone = dns.zone.from_file(str(path), origin=ZONE_NAME, relativize=True)
 
-        rdata = list(zone.get_rdataset("multibyte", dns.rdatatype.TXT))[0]
-        self.assertGreater(len(rdata.strings), 1, "400 octets must not be one string")
+        rdata = list(zone.get_rdataset("long_ascii", dns.rdatatype.TXT))[0]
+        self.assertGreater(len(rdata.strings), 1, "400 chars must not be one string")
         for chunk in rdata.strings:
             self.assertLessEqual(len(chunk), 255)
         self.assertEqual(
-            b"".join(rdata.strings).decode("utf-8"), TXT_CASES["multibyte"]
+            b"".join(rdata.strings).decode("utf-8"), TXT_CASES["long_ascii"]
         )
+
+
+class NonAsciiRejectedTestCase(TestCase):
+    """Pin the netbox_dns constraint the exporter leans on.
+
+    If this starts failing, upstream now accepts non-ASCII TXT values, so
+    multibyte data can reach the exporter and the octet-vs-character
+    distinction in format_txt_value stops being merely defensive.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.zone = Zone.objects.create(
+            name="ascii-guard.example.com",
+            soa_mname=NameServer.objects.create(name="ns2.example.com"),
+            soa_rname="hostmaster.ascii-guard.example.com",
+        )
+
+    def test_non_ascii_txt_is_refused(self):
+        with self.assertRaises(ValidationError):
+            Record.objects.create(
+                name="multibyte",
+                zone=self.zone,
+                type="TXT",
+                value="\u00e9" * 200,
+                ttl=300,
+            )
