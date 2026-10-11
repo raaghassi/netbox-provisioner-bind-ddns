@@ -22,7 +22,9 @@ from netbox_dns_bridge.utils import export_bind_zone_file
 
 ZONE_NAME = "bridge-export.example.com"
 
-# name -> the exact value a client should get back
+# Record NAME -> the exact value a client should get back. The keys double
+# as DNS labels, so they must be valid host names: netbox_dns rejected
+# "long_ascii" with "is not a valid DNS host name" because of the underscore.
 TXT_CASES = {
     "plain": "v=spf1 -all",
     # An embedded quote. Hand-rolled quoting produced "has"quote", which
@@ -36,7 +38,7 @@ TXT_CASES = {
     # own _split_text_value into `"chunk" "chunk"`, so this exercises BOTH
     # its chunking and the reassembly in format_txt_value, which must strip
     # that quoting before re-chunking on octets.
-    "long_ascii": "".join(chr(97 + i % 26) for i in range(400)),
+    "long-ascii": "".join(chr(97 + i % 26) for i in range(400)),
 }
 
 # NOT a case above, and the reason is load-bearing. netbox_dns refuses a TXT
@@ -98,12 +100,12 @@ class ZoneExportTXTTestCase(TestCase):
         path = self._export()
         zone = dns.zone.from_file(str(path), origin=ZONE_NAME, relativize=True)
 
-        rdata = list(zone.get_rdataset("long_ascii", dns.rdatatype.TXT))[0]
+        rdata = list(zone.get_rdataset("long-ascii", dns.rdatatype.TXT))[0]
         self.assertGreater(len(rdata.strings), 1, "400 chars must not be one string")
         for chunk in rdata.strings:
             self.assertLessEqual(len(chunk), 255)
         self.assertEqual(
-            b"".join(rdata.strings).decode("utf-8"), TXT_CASES["long_ascii"]
+            b"".join(rdata.strings).decode("utf-8"), TXT_CASES["long-ascii"]
         )
 
 
