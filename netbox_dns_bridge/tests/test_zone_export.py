@@ -55,11 +55,22 @@ TXT_CASES = {
 class ZoneExportTXTTestCase(TestCase):
     @classmethod
     def setUpTestData(cls):
+        nameserver = NameServer.objects.create(name="ns1.example.com")
         cls.zone = Zone.objects.create(
             name=ZONE_NAME,
-            soa_mname=NameServer.objects.create(name="ns1.example.com"),
+            soa_mname=nameserver,
             soa_rname=f"hostmaster.{ZONE_NAME}",
         )
+        # Assigning a nameserver is what materializes the NS records. netbox_dns
+        # creates SOA and NS as real Record rows (zone.py update_soa_record /
+        # update_ns_records, managed=True), and the m2m_changed post_add hook is
+        # what triggers the NS half - soa_mname alone does NOT. Without this the
+        # exported file has no NS RRset at the origin and a strict parser
+        # rejects it with dns.zone.NoNS, which is also what a real BIND would
+        # do. Keeping it means test_zone_file_is_parseable asserts the export is
+        # genuinely loadable, not merely syntactically readable.
+        cls.zone.nameservers.add(nameserver)
+
         for name, value in TXT_CASES.items():
             Record.objects.create(
                 name=name,
@@ -76,8 +87,10 @@ class ZoneExportTXTTestCase(TestCase):
         return path
 
     def test_zone_file_is_parseable(self):
-        """The whole-zone assertion. A single unescapable value used to make
-        the entire file unparseable, which is why this is separate."""
+        """The whole-zone assertion, and it is strict: from_file runs
+        check_origin, so this also requires SOA and NS at the origin. A single
+        unescapable value used to make the entire file unparseable, which is
+        why this stays separate from the per-value test."""
         path = self._export()
         zone = dns.zone.from_file(str(path), origin=ZONE_NAME, relativize=True)
         self.assertIsNotNone(zone)
