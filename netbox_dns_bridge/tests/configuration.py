@@ -56,6 +56,34 @@ PLUGINS = [
     "netbox_dns_bridge",
 ]
 
+# This plugin HARD-FAILS without its own PLUGINS_CONFIG entry: ready() raises
+# RuntimeError("failed to initialize due to missing settings. Terminating
+# Netbox.") when the key is absent or falsy. That is deliberate and is the
+# opposite of the version gate, which NetBox swallows silently - so the shape
+# below is required, not decorative.
+#
+# Mirrors the fleet's live configuration (svcs-aghassi-net
+# netbox/templates/configmap-extra.yaml), which is the authority for the shape.
+# tsig_keys is keyed by netbox-plugin-dns VIEW name, and "_default_" is the
+# view netbox-plugin-dns auto-creates. The secret is a throwaway.
+PLUGINS_CONFIG = {
+    "netbox_dns_bridge": {
+        "tsig_keys": {
+            "_default_": {
+                "keyname": "integration-test-key",
+                "secret": "bmV0Ym94LWRucy1icmlkZ2UtaW50ZWdyYXRpb24tdGVzdC10c2lnLWtleS1ub3QtYS1yZWFsLXNlY3JldCEhIQ==",
+                "algorithm": "hmac-sha512",
+            },
+        },
+        "axfr": {
+            "ixfr_enabled": True,
+        },
+        "ddns": {
+            "allowed_zones": [],
+        },
+    },
+}
+
 RQ = {"COMMIT_MODE": "auto"}
 
 # Test-only values. NetBox requires SECRET_KEY to be at least 50 characters,
