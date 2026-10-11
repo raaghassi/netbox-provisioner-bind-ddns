@@ -1,0 +1,144 @@
+---
+name: integration
+
+# Boots a real NetBox with this plugin installed and runs the in-package tests.
+# The host tests in ci.yml prove the pure functions; this proves the plugin
+# actually LOADS, which no lint can: NetBox catches IncompatiblePluginError,
+# warns and continues, so a bad version gate is silent.
+#
+# PORTABILITY: runs unchanged on Forgejo Actions, like ci.yml. Three rules make
+# that work, and each one has a reason you cannot see from the file alone:
+#
+#   1. Services carry NO "ports". The runner passes declared ports straight
+#      through as docker bindings onto the runner VM, nothing filters them, and
+#      its dockerd is root. Under a container job they are also unnecessary:
+#      the runner builds a per-job bridge network and gives each service its
+#      declared key as a network alias, so the job reaches them by key.
+#      Verified on the fleet runner 2026-10-11 (redis answered +PONG and
+#      postgres answered a real startup packet, addressed by key alone).
+#   2. NetBox is cloned with plain git, NOT actions/checkout's "repository"
+#      input. That input resolves against the CURRENT server, so on Forgejo it
+#      would look for netbox-community/netbox on the Forgejo instance.
+#   3. Python comes from the runner image, so actions/checkout@v4 stays the
+#      only action. The act image ships 3.12, inside NetBox 4.7's 3.12-3.14.
+
+"on":
+  push:
+    branches:
+      - "**"
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: integration-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pin the NetBox under test to the tag the fleet image runs. Bump this
+  # together with images-aghassi-net netbox/Dockerfile and the plugin's own
+  # min_version/max_version.
+  NETBOX_REF: v4.7.2
+
+jobs:
+  netbox:
+    name: netbox integration
+    runs-on: ubuntu-latest
+
+    # The job MUST run in a container, on both platforms, and this is what
+    # makes rule 1 above safe. Service containers are addressable by their
+    # declared key only from another container on the same per-job network. A
+    # job that runs directly on the runner host instead reaches services at
+    # localhost:<published port>, which would force "ports" back in. Pinning
+    # the job into a container keeps one file correct on GitHub and Forgejo,
+    # and the image is the same one the fleet runner's ubuntu-latest label
+    # already maps to.
+    container:
+      image: ghcr.io/catthehacker/ubuntu:act-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: netbox
+          POSTGRES_PASSWORD: netbox
+          POSTGRES_DB: netbox
+      redis:
+        image: redis:7-alpine
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: bridge
+
+      # Service health options are not portable, so wait explicitly. Each probe
+      # speaks the real protocol: an open port is not evidence the server is
+      # ready to answer.
+      - name: Wait for postgres and redis by service key
+        run: |
+          python3 - <<'PY'
+          import socket, sys, time
+
+          def wait(host, port, probe, want, timeout=120):
+              end = time.time() + timeout
+              last = None
+              while time.time() < end:
+                  try:
+                      s = socket.create_connection((host, port), timeout=3)
+                      s.sendall(probe)
+                      reply = s.recv(64)
+                      s.close()
+                      if reply.startswith(want):
+                          print(f"OK: {host}:{port} -> {reply[:16]!r}")
+                          return
+                      last = f"unexpected reply {reply[:32]!r}"
+                  except OSError as exc:
+                      last = exc
+                  time.sleep(2)
+              sys.exit(f"FAIL: {host}:{port} not ready ({last})")
+
+          wait("redis", 6379, b"PING\r\n", b"+PONG")
+
+          params = b"user\x00netbox\x00database\x00netbox\x00\x00"
+          body = (3 << 16).to_bytes(4, "big") + params
+          startup = (len(body) + 4).to_bytes(4, "big") + body
+          # R = authentication request, E = error response. Either proves the
+          # postgres wire protocol; only a silent socket does not.
+          wait("postgres", 5432, startup, b"R")
+          PY
+
+      - name: Clone NetBox ${{ env.NETBOX_REF }}
+        run: |
+          git clone --depth 1 --branch "$NETBOX_REF" \
+            https://github.com/netbox-community/netbox.git netbox
+          echo "cloned $(git -C netbox describe --tags --always)"
+
+      - name: Install NetBox and this plugin
+        run: |
+          set -euo pipefail
+          # NetBox pins psycopg[c,pool], which builds psycopg-c from source and
+          # so needs libpq-dev and a compiler. [binary] is an official extra of
+          # the SAME version shipping prebuilt wheels, so swap it for CI rather
+          # than depend on the job image's build chain.
+          sed -i 's/psycopg\[c,pool\]/psycopg[binary,pool]/' netbox/requirements.txt
+          grep -n '^psycopg' netbox/requirements.txt
+          python3 -m pip install --disable-pip-version-check -U pip
+          python3 -m pip install --disable-pip-version-check -r netbox/requirements.txt
+          # Non-editable, matching how the fleet image installs it from git, so
+          # the tests run against the packaged layout and not the source tree.
+          python3 -m pip install --disable-pip-version-check ./bridge
+
+      - name: Report the assembled versions
+        run: |
+          python3 - <<'PY'
+          from importlib.metadata import version
+          for dist in ("netbox-plugin-dns", "netbox-plugin-dns-bridge", "dnspython"):
+              try:
+                  print(f"{dist}: {version(dist)}")
+              except Exception as exc:
+                  print(f"{dist}: NOT INSTALLED ({exc})")
+          PY
+
+      - name: Run the integration tests
+        env:
+          NETBOX_CONFIGURATION: netbox_dns_bridge.tests.configuration
+        run: python3 netbox/netbox/manage.py test netbox_dns_bridge.tests -v2
