@@ -121,6 +121,10 @@ jobs:
           echo "cloned $(git -C netbox describe --tags --always)"
 
       - name: Install NetBox and this plugin
+        env:
+          # /github/home is not writable in a container job, so pip warns and
+          # disables its cache anyway. Say so deliberately instead.
+          PIP_NO_CACHE_DIR: "1"
         run: |
           set -euo pipefail
           # NetBox pins psycopg[c,pool], which builds psycopg-c from source and
@@ -129,15 +133,22 @@ jobs:
           # than depend on the job image's build chain.
           sed -i 's/psycopg\[c,pool\]/psycopg[binary,pool]/' netbox/requirements.txt
           grep -n '^psycopg' netbox/requirements.txt
-          python3 -m pip install --disable-pip-version-check -U pip
-          python3 -m pip install --disable-pip-version-check -r netbox/requirements.txt
+          # The job image's system Python is PEP 668 externally-managed, so a
+          # plain `pip install` is refused with externally-managed-environment.
+          # Use a venv, which is what that error recommends, rather than
+          # --break-system-packages. ci.yml needs none of this because it has
+          # no container and runs on the host Python.
+          python3 -m venv venv
+          ./venv/bin/python -m pip install --disable-pip-version-check -U pip
+          ./venv/bin/python -m pip install --disable-pip-version-check \
+            -r netbox/requirements.txt
           # Non-editable, matching how the fleet image installs it from git, so
           # the tests run against the packaged layout and not the source tree.
-          python3 -m pip install --disable-pip-version-check ./bridge
+          ./venv/bin/python -m pip install --disable-pip-version-check ./bridge
 
       - name: Report the assembled versions
         run: |
-          python3 - <<'PY'
+          ./venv/bin/python - <<'PY'
           from importlib.metadata import version
           for dist in ("netbox-plugin-dns", "netbox-plugin-dns-bridge", "dnspython"):
               try:
@@ -149,4 +160,4 @@ jobs:
       - name: Run the integration tests
         env:
           NETBOX_CONFIGURATION: netbox_dns_bridge.tests.configuration
-        run: python3 netbox/netbox/manage.py test netbox_dns_bridge.tests -v2
+        run: ./venv/bin/python netbox/netbox/manage.py test netbox_dns_bridge.tests -v2
